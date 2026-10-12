@@ -15,6 +15,7 @@ import { handleGetDynpro } from './handlers/handleGetDynpro';
 import { handleManageDynpro } from './handlers/handleManageDynpro';
 import { handleWriteProgram } from './handlers/handleWriteProgram';
 import { handleManageMessageClass } from './handlers/handleManageMessageClass';
+import { handleManageAuthObject } from './handlers/handleManageAuthObject';
 import { handleDataPreview } from './handlers/handleDataPreview';
 import { handleGetCode } from './handlers/handleGetCode';
 import * as fs from 'fs';
@@ -307,6 +308,56 @@ describe('mcp_abap_adt_server - Integration Tests', () => {
       const result = await handleManageDynpro({ action: 'update', program_name: 'SAPLSPO1', dynnr: '0100', flow_logic: flow });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('customer programs');
+    });
+  });
+
+  // Needs the ZMCP SICF endpoint default_host/zmcp/auth_object. SU21 objects cannot be deleted, so the
+  // create path is exercised once by hand (see TODO.md) and these tests only validate input and update
+  // the long-lived anchor object ZMCP_E2E01 (class BC_Z, package ZMCP; override: MCP_TEST_AUTH_OBJECT).
+  describe('handleManageAuthObject', () => {
+    const anchor = process.env.MCP_TEST_AUTH_OBJECT || 'ZMCP_E2E01';
+    const text = (r: any) => String(r.content?.[0]?.text ?? '');
+
+    it('should refuse bad input before saving anything', async () => {
+      const ns = await handleManageAuthObject({ action: 'create', object_name: 'XMCP_E2E01', object_class: 'BC_Z', description: 'x', package_name: 'ZMCP' });
+      expect(ns.isError).toBe(true);
+      expect(text(ns)).toContain('customer namespace');
+      const long = await handleManageAuthObject({ action: 'create', object_name: 'ZMCP_E2E_TOO_LONG', object_class: 'BC_Z', description: 'x', package_name: 'ZMCP' });
+      expect(long.isError).toBe(true);
+      const field = await handleManageAuthObject({ action: 'create', object_name: 'ZMCP_NEW1', object_class: 'ZZZZ', description: 'x', package_name: 'ZMCP', fields: [{ field_name: 'NO_SUCH_FIELD_X' }] });
+      expect(field.isError).toBe(true);
+      expect(text(field)).toContain('Invalid authorization field');
+      // (The two create calls below use a short name and the nonexistent class ZZZZ, so even a validation
+      // regression could not create a real, undeletable SU21 object.)
+      // ACTVT without an activity list is refused on CREATE, before any SAP call. (On UPDATE it is legal -
+      // the existing activity list is kept - and the field list is REPLACED, so never send a partial field
+      // list to the anchor object here: an earlier version of this test did and cut its fields down to ACTVT.)
+      const actvt = await handleManageAuthObject({ action: 'create', object_name: 'ZMCP_NEW1', object_class: 'ZZZZ', description: 'x', package_name: 'ZMCP', fields: [{ field_name: 'ACTVT' }] });
+      expect(actvt.isError).toBe(true);
+      expect(text(actvt)).toContain('permitted_activities');
+      const missing = await handleManageAuthObject({ action: 'update', object_name: 'ZMCP_NOOBJ', description: 'x' });
+      expect(missing.isError).toBe(true);
+      expect(text(missing)).toContain('not found');
+    });
+
+    it('should refuse to create an object that already exists', async () => {
+      const dup = await handleManageAuthObject({ action: 'create', object_name: anchor, object_class: 'BC_Z', description: 'duplicate', package_name: 'ZMCP' });
+      expect(dup.isError).toBe(true);
+      expect(text(dup)).toContain('already exists');
+    });
+
+    it('should update the description of the anchor object and read it back', async () => {
+      const read = async () => text(await handleDataPreview({ query: `SELECT t~ttext FROM tobjt AS t WHERE t~object = '${anchor}'`, max_rows: 5 }));
+      const original = 'MCP e2e test auth object';
+      const touched = 'MCP e2e test auth object (touched)';
+      const set = async (d: string) => { const r = await handleManageAuthObject({ action: 'update', object_name: anchor, description: d }); expect(r.isError).toBe(false); };
+      try {
+        await set(touched);
+        expect(await read()).toContain(touched);
+      } finally {
+        await set(original);      // always restore, even if the assertion above failed
+      }
+      expect(await read()).toContain(original);
     });
   });
 

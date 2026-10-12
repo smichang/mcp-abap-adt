@@ -358,6 +358,8 @@ DDIC facts: `TOBJ` (client-independent, key `OBJCT`, 10 inline field slots `FIEL
 
 Message class `ZMCP_AUTH_OBJECT` doesn't exist, so `map_exception` builds error text itself from the textid + the exception's `detail` (same 50-char-truncation avoidance as `ManageTransport`).
 
+**Live-verified 2026-10-12 on a clean system** with the permanent anchor object `ZMCP_E2E01` (class `BC_Z`, package `ZMCP`, in the transport used for the endpoint install; SU21 objects cannot be deleted, so it stays and is reused by the tests): `create` with fields `BUKRS`+`ACTVT` and activities `02,03` wrote `TOBJ`, `TOBJT`, `TACTZ` and a `TADIR` `SUSO` entry, all read back; `update` of the description alone left fields and activities untouched; `update` of the activities (`02,03,06`) changed only `TACTZ`; adding a field (`WERKS`) without `permitted_activities` kept the existing activity list; a duplicate `create` was refused (`already exists`); once a throwaway `$TMP` program used the object in an `AUTHORITY-CHECK`, a field-list change was refused (`field edit mode 03`, "Nothing was saved") while description and activities were still changeable. **Trap:** on `update` the field list is *replaced*, so a partial list silently drops the other fields (an early version of the test cut the anchor down to `ACTVT`; it was restored). The tests therefore send negative cases only as `create` calls with a short name and the nonexistent class `ZZZZ`.
+
 ---
 
 ## ManageDDIC Tool

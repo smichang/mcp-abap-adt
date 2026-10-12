@@ -4,6 +4,31 @@ This project provides an [MCP](https://modelcontextprotocol.io/) server that let
 
 **Repository:** <https://github.com/smichang/mcp-abap-adt>
 
+## Purpose
+
+This project exists for three goals:
+
+1. **Free your hands.** The AI agent does the ABAP work end to end — you describe the outcome and review the result instead of clicking through SE80, SE09, SE11, SE91, SE51, SU21 or SM12.
+2. **Cover the whole ABAP development cycle.** Every stage has a tool, so no step forces you back into SAP GUI or Eclipse:
+
+   | Stage | Tools |
+   |---|---|
+   | Discover & read | `SearchObject`, `GetCode` (source, versions, enhancements, where-used, screens), `GetMeta` (packages, types, transactions, transports, message classes, DDIC, inactive objects), `DataPreview` |
+   | Create & change | `WriteProgram` (programs, includes, classes, function groups/modules, text elements), `ManageDDIC`, `ManageMessageClass`, `ManageDynpro`, `ManageAuthObject`, `TextPoolLang` |
+   | Transport | `ManageTransport` (create, rename, assign, move, merge, release, delete) |
+   | Activate | `ActivateObjects` (mass activation, RFC toggle) |
+   | Test & quality | `RunUnitTest`, `RunATCCheck` |
+   | Diagnose & recover | `GetDiagnostics` (dumps, traces, gateway errors), `UnlockObject`, `DeleteObject` |
+   | Extend SAP side | `ManageSicfNode` plus the optional ABAP endpoints in [`abap-tasks/`](abap-tasks) |
+
+3. **Recursive self-improvement.** If a manual step is still left — a transaction you had to open, a lock you had to clear in SM12, a setting only SAP GUI exposes — that is a bug in this project, not a fact of life. The agent should:
+   1. probe the live system to find an ADT endpoint, a function module or a class that does the job (see "Discovering & Verifying ADT Endpoints" in `CLAUDE.md`);
+   2. if standard ADT has no contract, add a small standalone SICF endpoint under [`abap-tasks/`](abap-tasks) (this is how `ManageAuthObject`, `ManageDynpro` and the `ManageTransport` move/merge/remove actions came about);
+   3. wrap it as a new tool or a new action of an existing tool, following the 3-step pattern in `CLAUDE.md`, and cover it with a live test that only touches its own `$TMP`/`ZMCP_*` fixtures;
+   4. record the traps it hit in `CLAUDE.md` and the agent skill, so the next session starts from the improved toolset instead of rediscovering them.
+
+   Each manual step that gets automated shrinks the gap between "the AI can help" and "the AI does it".
+
 ## Recommended Setup
 
 1. Install Git, Node.js LTS, and npm.

@@ -17,7 +17,7 @@ Follow `abap-tasks/README.md` steps 1–6 and record what breaks.
 - [x] Fix `abap-tasks/README.md` wherever the steps differ from reality (parameter names, class order, message-class texts) — steps held up; added `source_file` path note, test-class commands and per-endpoint checks (step 4 logon wording still unchecked, see above)
 - [x] Missing message classes: **not** all cosmetic. `ZMCP_DISPATCH` and `ZMCP_TEXTPOOL` are needed (their handlers use `get_text()`; without them errors read `I:ZMCP_DISPATCH:001 <action>`) — created, README now lists their texts. `ZMCP_AUTH_OBJECT` / `ZMCP_DYNPRO` are cosmetic (handlers build their own text) and stay optional
   - [x] `ZMCP_DYNPRO`: success paths exercised by `npm test` (`ManageDynpro` create / update / delete / check all passed on the live system)
-  - [ ] `ZMCP_AUTH_OBJECT`: success path and non-trivial errors still not exercised (`ManageAuthObject` create/update has no test; needs a disposable `Z*` authorization object and an existing object class)
+  - [x] `ZMCP_AUTH_OBJECT` / `ManageAuthObject`: success path and error paths exercised live (2026-10-12) with the permanent anchor object `ZMCP_E2E01` (SU21 objects cannot be deleted); 3 integration tests added in `src/index.test.ts` (input validation, duplicate create, description update with restore)
 
 Note: the renamed classes (`ZCL_HTTP_MCP_*`, `ZCL_MCP_*`, `ZCX_MCP_*`, `/zmcp/<node>`) have never run; only the old `ZAIMCP` names were exercised on the original system.
 
