@@ -1,7 +1,7 @@
 ---
 name: mcp-abap-adt
 metadata:
-  version: "1.1"
+  version: "1.2"
 description: >-
   How to work on an SAP ABAP system through the mcp-abap-adt MCP server: find and
   read objects, change source safely (lock → write → unlock → activate), manage
@@ -18,7 +18,18 @@ back. Local files are only working copies.
 
 Load `references/tool-reference.md` for the full tool table, parameters and traps.
 Load `abap-tasks/README.md` (repo root) only when a tool needs a custom ABAP-side
-endpoint that is not installed yet.
+endpoint that is not installed yet. Load further references only when the task needs them:
+
+| The task is… | Read (in `references/`) |
+|---|---|
+| Writing or changing ABAP: style, strict-mode and activation traps, exceptions, wide changes | `abap-coding-rules.md` |
+| A function-module signature (TYPE vs LIKE, `TABLES`, RFC-enabled) | `fm-parameter-typing.md` |
+| Performance work or reviewing a change (N+1, redirected S/4 tables, bounded reads) | `performance-patterns.md` |
+| Adding a cache or memoizing a hot routine | `safe-caching.md` |
+| Replacing BDC `CALL TRANSACTION` with a BAPI | `bdc-to-bapi.md` |
+| Proving a change, chasing a hard bug, reviewing a transport | `testing-and-diagnosis.md` |
+| A write, transport or DDIC call misbehaving; new objects; sequencing writes | `write-and-transport-details.md` |
+| A capability ADT lacks and you consider a custom SICF endpoint | `custom-endpoints.md` |
 
 ## Workflow for any change
 
@@ -63,6 +74,9 @@ endpoint that is not installed yet.
   error says `User X is currently editing`, and X is the configured SAP user, it is
   usually a leftover session: run `UnlockObject` alone, then retry. Never force
   another developer's lock.
+- **Never retype a field list that must match another** (duplicated structure, before/after
+  compare, bulk rename): fetch the live object, edit only the lines that differ or script the
+  transform, and diff the extracted names (`abap-coding-rules.md` §5).
 - **Always append `/source/main`** when you call raw source URLs; the tools do it for you.
 - **Never overwrite a different transport silently.** `WriteProgram` refuses when the
   object is locked in another request than the one you named; use the transport it
