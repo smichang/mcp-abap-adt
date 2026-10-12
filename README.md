@@ -25,7 +25,7 @@ This project exists for three goals:
    1. probe the live system to find an ADT endpoint, a function module or a class that does the job (see "Discovering & Verifying ADT Endpoints" in `CLAUDE.md`);
    2. if standard ADT has no contract, add a small standalone SICF endpoint under [`abap-tasks/`](abap-tasks) (this is how `ManageAuthObject`, `ManageDynpro` and the `ManageTransport` move/merge/remove actions came about);
    3. wrap it as a new tool or a new action of an existing tool, following the 3-step pattern in `CLAUDE.md`, and cover it with a live test that only touches its own `$TMP`/`ZMCP_*` fixtures;
-   4. record the traps it hit in `CLAUDE.md` and the agent skill, so the next session starts from the improved toolset instead of rediscovering them.
+   4. record the traps it hit in `docs/TOOL_INTERNALS.md` and the agent skill, so the next session starts from the improved toolset instead of rediscovering them.
 
    Each manual step that gets automated shrinks the gap between "the AI can help" and "the AI does it".
 
@@ -103,7 +103,7 @@ is set), then `.env` — so an operator override always wins and the mechanism i
 when `SECRETS_KEYSTORE` isn't set. Rotate one credential later with
 `node scripts/setup-secrets.js --rotate SAP_PASSWORD`. Run the setup script on the server
 itself in a real terminal, never through an AI tool — it reads/writes real credentials. See
-`CLAUDE.md` → "Secrets Keystore" for the full design.
+`docs/TOOL_INTERNALS.md` → "Secrets Keystore" for the full design.
 
 > **If this one `dist/index.js` install is shared by several projects' own MCP config
 > files** (each project has its own MCP config, but they all point at the same

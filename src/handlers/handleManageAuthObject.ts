@@ -15,7 +15,7 @@ import { makeAdtRequest, return_response, return_error, getBaseUrl } from '../li
 // Scope: create/update of the Authorization Object + its up to 10 fields,
 // plus ACTVT's permitted-activity list (TACTZ). The Object Class (e.g. "CO",
 // "FI", "PP") must already exist — creating a new class, or a new global
-// SU20 authorization field, is out of scope. Delete is also out of scope (see CLAUDE.md for why).
+// SU20 authorization field, is out of scope. Delete is also out of scope (see docs/TOOL_INTERNALS.md for why).
 export async function handleManageAuthObject(args: any) {
     try {
         const action = args?.action ? String(args.action) : '';
@@ -101,7 +101,7 @@ export async function handleManageAuthObject(args: any) {
     } catch (error) {
         const result = return_error(error);
         // create is a two-phase save (header first, then fields — see
-        // CLAUDE.md). A field-save failure means the header already exists
+        // docs/TOOL_INTERNALS.md). A field-save failure means the header already exists
         // and is registered in the transport, so say so instead of leaving
         // the caller to assume a clean no-op.
         const text = result.content?.[0]?.text ?? '';

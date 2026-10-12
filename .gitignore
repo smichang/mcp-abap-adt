@@ -15,7 +15,7 @@ package-lock.json
 
 # Secrets keystore (opt-in alternative to .env — see scripts/setup-secrets.js)
 # secret*/ also covers named per-target keystores from `setup-secrets.js --out DIR`
-# (e.g. secret-800/ for a second SAP client — see CLAUDE.md "Connecting to a second
+# (e.g. secret-800/ for a second SAP client — see docs/TOOL_INTERNALS.md "Connecting to a second
 # SAP client/system")
 secret/
 secret-*/

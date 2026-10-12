@@ -389,7 +389,7 @@ async function actionMoveObject(args: any, baseUrl: Buffer | string): Promise<an
 // that class's dispatch source directly, not by guessing). Wraps
 // ZCL_MCP_TRANSPORT_ADMIN=>delete_object, itself wrapping the real FM
 // TR_DELETE_COMM_OBJECT_KEYS (same one SAP's own CTS REST API class calls
-// internally with IV_DIALOG_FLAG=' ' for headless mode). See CLAUDE.md's
+// internally with IV_DIALOG_FLAG=' ' for headless mode). See docs/TOOL_INTERNALS.md's
 // ManageTransport section for the full discovery trail.
 async function actionRemoveObject(args: any, baseUrl: Buffer | string): Promise<any> {
     const pgmid          = args.pgmid ? String(args.pgmid).toUpperCase() : 'R3TR';

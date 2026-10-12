@@ -56,7 +56,7 @@ Note: the renamed classes (`ZCL_HTTP_MCP_*`, `ZCL_MCP_*`, `ZCX_MCP_*`, `/zmcp/<n
 - [x] Tag `v3.5.0` pushed (commit `2e7241a`); GitHub release page with notes and the repo description/topics still to be set by hand on github.com
 - [x] npm publishing: decided against for now (unpublished; the name may belong to the upstream project; users clone and build)
 - [x] `Dockerfile` and `smithery.yaml` removed (decision: no container support; the old image would have baked a local `.env` into itself)
-- [ ] Trim `CLAUDE.md` if it is too internal for a public repo
+- [x] `CLAUDE.md` trimmed from 10,083 to about 2,500 words: rules every session needs stay; per-tool endpoints, request shapes and traps moved verbatim to `docs/TOOL_INTERNALS.md` (checked line by line, nothing lost); references in README, source comments and docs repointed
 - [ ] Optional: add `README.zh-TW.md` again, scrubbed (the private repo has one)
 
 ## 5. Keeping the private and public repos in sync

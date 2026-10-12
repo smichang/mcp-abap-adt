@@ -19,7 +19,7 @@
 // Each keystore is a self-contained SAP_URL/SAP_USERNAME/SAP_PASSWORD/SAP_CLIENT set — to talk to a
 // second SAP client, bootstrap a second keystore under a different --out dir (e.g. `secret-800/`) from
 // a second .env file (e.g. `.env.800`), then register a second entry in your MCP client config pointing
-// SECRETS_KEYSTORE/SECRETS_KEYSTORE_PASSWORD_FILE at that dir's files. See CLAUDE.md "Secrets Keystore".
+// SECRETS_KEYSTORE/SECRETS_KEYSTORE_PASSWORD_FILE at that dir's files. See docs/TOOL_INTERNALS.md "Secrets Keystore".
 'use strict';
 
 const fs = require('fs');

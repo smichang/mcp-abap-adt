@@ -20,7 +20,7 @@ function lockFilePath(): string {
     const { url, client } = getConfig();
     // Scoped per SAP system (URL + client), not global — connections pointed at different
     // SAP systems must never block each other (this build is shared across many project dirs,
-    // see the Secrets Keystore "one build, many callers" note in CLAUDE.md).
+    // see the Secrets Keystore "one build, many callers" note in docs/TOOL_INTERNALS.md).
     //
     // os.tmpdir() is machine-wide on Linux/macOS (/tmp), but per-user on Windows (%TEMP%,
     // under that user's own profile) — verified against Node's documented platform behavior,

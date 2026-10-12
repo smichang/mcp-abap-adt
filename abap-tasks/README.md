@@ -154,7 +154,7 @@ Deleting a node: `ManageSicfNode action=delete_sicf_node payload="name=textpool"
 
 ## Adding your own endpoint later
 
-Copy the shape: a handler class implementing `IF_HTTP_EXTENSION` (CSRF-token handling is in `ZCL_HTTP_MCP_DISPATCH` — copy it verbatim), a logic class that raises its own exception, a node created with `create_sicf_node`, and a TypeScript handler in `src/handlers/` that calls `/zmcp/<node>`. Tiny actions (like `ping`) can instead be a new `WHEN` branch in `ZCL_MCP_DISPATCH=>dispatch` — a normal `WriteProgram` change, no new node. See the repo's `CLAUDE.md` for the decision rule and the traps already found (dialog-free CTS APIs, 50-char `get_text()` truncation, `INDX` instead of session memory for CSRF).
+Copy the shape: a handler class implementing `IF_HTTP_EXTENSION` (CSRF-token handling is in `ZCL_HTTP_MCP_DISPATCH` — copy it verbatim), a logic class that raises its own exception, a node created with `create_sicf_node`, and a TypeScript handler in `src/handlers/` that calls `/zmcp/<node>`. Tiny actions (like `ping`) can instead be a new `WHEN` branch in `ZCL_MCP_DISPATCH=>dispatch` — a normal `WriteProgram` change, no new node. See the repo's `CLAUDE.md` for the decision rule and `docs/TOOL_INTERNALS.md` for the traps already found (dialog-free CTS APIs, 50-char `get_text()` truncation, `INDX` instead of session memory for CSRF).
 
 ## Security notes
 
