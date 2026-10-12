@@ -83,17 +83,18 @@ CLASS zcl_mcp_sicf_admin IMPLEMENTATION.
     APPEND lv_handler TO lt_handlerlist.
 
     DATA ls_icfserdesc TYPE icfserdesc.
-    " login_process = 'L' ("Alternative logon sequences") - confirmed
-    " live that both manually-created reference nodes
-    " (dispatch, textpool) carry this. The simplified
-    " HTTPTREE_INSERT_NODE FM silently ignores icfserdesc-login_process
-    " entirely (verified by reading its source and by creating a
-    " throwaway node through it that came out blank regardless) - that is
-    " why this method calls CL_ICF_TREE=>IF_ICF_TREE~INSERT_NODE directly
-    " instead: its source explicitly does
-    " "IF icfserdesc-login_process IS NOT INITIAL. new_icfservice-
-    " login_process = icfserdesc-login_process. ENDIF." - a real,
-    " unconditional field copy, not dependent on activation order.
+    " Logon Procedure = "Alternative Logon Procedure" (the SICF Logon Data
+    " tab). In ICFSERVICE that is LOG_FLAG = 'X' (data element ICFLOGFLAG,
+    " "Flag for Selecting Alternative Logon Order") together with
+    " LOGIN_PROCESS = 'L', LOG_ORDER left empty - exactly what the manual
+    " dispatch node and /sap/bc/adt carry. LOGIN_PROCESS = 'L' alone is NOT
+    " enough: the screen then still shows "Standard". INSERT_NODE derives
+    " both fields from icfserdesc-log_flag ('X' -> login_process 'L',
+    " log_flag 'X', log_order copied), so only log_flag has to be set.
+    " The simplified HTTPTREE_INSERT_NODE FM ignores icfserdesc logon
+    " fields (verified by reading its source), which is why this method
+    " calls CL_ICF_TREE=>IF_ICF_TREE~INSERT_NODE directly.
+    ls_icfserdesc-log_flag      = 'X'.
     ls_icfserdesc-login_process = 'L'.
 
     DATA lv_transport TYPE trkorr.

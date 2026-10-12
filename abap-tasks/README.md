@@ -9,6 +9,7 @@ Most tools in this server talk to stock ADT and need nothing installed on SAP. A
 | `ManageAuthObject` (SU21) | `auth_object` | `ZCL_HTTP_MCP_AUTH_OBJECT` | `ZCL_MCP_AUTH_OBJECT`, `ZCX_MCP_AUTH_OBJECT` |
 | `ManageTransport` `move_object` / `merge` / `remove_object` | `transport_admin` | `ZCL_HTTP_MCP_TRANSPORT_ADMIN` | `ZCL_MCP_TRANSPORT_ADMIN` |
 | `ManageDynpro`, `GetCode resource=DYNPRO` | `dynpro` | `ZCL_HTTP_MCP_DYNPRO` | `ZCL_MCP_DYNPRO`, `ZCX_MCP_DYNPRO` |
+| `UnlockObject force=true` (delete own orphan SM12 locks) | `lock_admin` | `ZCL_HTTP_MCP_LOCK_ADMIN` | `ZCL_MCP_LOCK_ADMIN` (raises `ZCX_MCP_DISPATCH`) |
 
 Naming scheme: package `ZMCP`, SICF parent node `zmcp`, handler `ZCL_HTTP_MCP_<X>`, logic `ZCL_MCP_<X>`, exception `ZCX_MCP_<X>`, message class `ZMCP_<X>`. If you need another prefix, rename consistently — the URLs `/zmcp/<node>` are hard-coded in `src/handlers/`.
 
@@ -63,7 +64,20 @@ WriteProgram program_name=ZCX_MCP_DISPATCH object_type=CLAS package_name=ZMCP
 ActivateObjects names=[ZCX_MCP_DISPATCH, ZCL_MCP_SICF_ADMIN, ZCL_MCP_DISPATCH, ZCL_HTTP_MCP_DISPATCH]
 ```
 
-Optional but recommended: message class `ZMCP_DISPATCH` (`ManageMessageClass`) so error texts render properly:
+`source_file` is resolved against the MCP server's working directory. With the project-level `.mcp.json` that is the repository root, so the paths above work as written. Use `description` as a free-text title (any text up to 60 characters); the other parameters stay the same for every class.
+
+The optional test class goes in after the four are active, and can be activated on write:
+
+```text
+WriteProgram program_name=ZCL_MCP_DISPATCH_TEST object_type=CLAS package_name=ZMCP
+             description="MCP dispatcher unit tests" transport_number=<yours>
+             source_file=abap-tasks/zmcp-dispatcher/src/ZCL_MCP_DISPATCH_TEST.clas.abap activate=true
+RunUnitTest object_name=ZCL_MCP_DISPATCH_TEST
+```
+
+Expect 8 tests, all passing.
+
+Create message class `ZMCP_DISPATCH` (`ManageMessageClass`, package `ZMCP`, your transport) so error texts render. **Without it the dispatcher's errors come back as `I:ZMCP_DISPATCH:001 <action>`** — the handler renders them with `get_text()`, so the message number and parameters survive but the sentence and the `create_sicf_node` failure reason do not.
 
 | No | Text |
 |---|---|
@@ -71,13 +85,24 @@ Optional but recommended: message class `ZMCP_DISPATCH` (`ManageMessageClass`) s
 | 002 | `Permission denied for action &1` |
 | 003 | `Bad request for action &1: &2` |
 
-The same applies to `ZMCP_TEXTPOOL`, `ZMCP_AUTH_OBJECT` (001–010) and `ZMCP_DYNPRO` (001–010) if you install those endpoints; the handlers build most error text themselves, so a missing message class is cosmetic, not fatal.
+The same holds for `ZMCP_TEXTPOOL` if you install the text pool endpoint (its handler also uses `get_text()`; without the class errors read `I:ZMCP_TEXTPOOL:003 <program> <language>`):
+
+| No | Text |
+|---|---|
+| 001 | `No authorization to change the text pool of &1` |
+| 002 | `Inserting the text pool of &1 failed` |
+| 003 | `Text pool of &1 not found in language &2` |
+| 004 | `Unknown language &1` |
+
+`ZMCP_AUTH_OBJECT` and `ZMCP_DYNPRO` are **not needed**: those handlers build their error text themselves (and avoid the 50-character truncation of T100 placeholders), so the message class only classifies the error. `transport_admin` has no exception class at all.
+
+Note when testing: SAP can serve an identical repeated `GET` from a cache, so an error probe may keep showing the old text after you create a message class. Change the probe input (another action or program name) to see the new text.
 
 ## Step 4 — Manual SICF node `dispatch`
 
 1. `SICF` → right-click `default_host/zmcp` → New Sub-Element → name `dispatch`.
 2. **Handler List** tab: add `ZCL_HTTP_MCP_DISPATCH`.
-3. **Logon Data** tab: set the same logon procedure the ADT node `/sap/bc/adt` uses — *Alternative Logon Procedure* with *Basic Authentication* ticked (open `default_host/sap/bc/adt` side by side and copy). No anonymous user. The handler relies on SICF having authenticated the caller (`sy-uname`).
+3. **Logon Data** tab: set **Logon Procedure** to *Alternative Logon Procedure* (stored as `LOG_FLAG = 'X'` plus `LOGIN_PROCESS = 'L'` in `ICFSERVICE`, `LOG_ORDER` empty; it is what `/sap/bc/adt` and every node `create_sicf_node` creates use — `LOGIN_PROCESS = 'L'` alone still shows as *Standard*). Leave user, password and client empty — no anonymous user. The handler relies on SICF having authenticated the caller (`sy-uname`).
 4. Save into package `ZMCP`, then right-click → **Activate Service**.
 
 ## Step 5 — Verify
@@ -89,7 +114,7 @@ curl -k -u USER:PASS -H "sap-client: 100" \
 
 Expect `pong`, `uname: USER`, a timestamp and `payload: hello`. Or use the tool: `ManageSicfNode action=ping payload=hello method=GET`.
 
-Failure guide: `404` = node missing or inactive; `401` = logon data not set to Basic Authentication; `403 CSRF token validation failed` on POST = send `X-CSRF-Token: Fetch` first (the MCP tool does this automatically).
+Failure guide: `404` = node missing or inactive; `401` = Logon Procedure not set to *Alternative Logon Procedure*; `403 CSRF token validation failed` on POST = send `X-CSRF-Token: Fetch` first (the MCP tool does this automatically).
 
 ## Step 6 — Everything else: the AI takes over
 
@@ -108,8 +133,20 @@ ManageSicfNode action=create_sicf_node method=POST
 | SU21 auth object | `ZCX_MCP_AUTH_OBJECT`, `ZCL_MCP_AUTH_OBJECT`, `ZCL_HTTP_MCP_AUTH_OBJECT` | `auth_object` |
 | Transport admin | `ZCL_MCP_TRANSPORT_ADMIN`, `ZCL_HTTP_MCP_TRANSPORT_ADMIN` | `transport_admin` |
 | Dynpro | `ZCX_MCP_DYNPRO`, `ZCL_MCP_DYNPRO`, `ZCL_HTTP_MCP_DYNPRO` | `dynpro` |
+| Lock admin (SM12 cleanup, own user) | `ZCL_MCP_LOCK_ADMIN`, `ZCL_HTTP_MCP_LOCK_ADMIN` (needs the dispatcher's `ZCX_MCP_DISPATCH`) | `lock_admin` |
 
 Activate each group with one `ActivateObjects` call (the exception class and core class must be active before the handler compiles).
+
+`create_sicf_node` answers `created + activated: default_host/zmcp/<name>` plus the node GUID; no manual SICF step follows. A quick check per endpoint that changes nothing:
+
+| Endpoint | Check |
+|---|---|
+| `textpool` | `TextPoolLang action=get program_name=RSUSR002 category=selections language=EN limit=3` returns entries |
+| `dynpro` | `GetCode resource=DYNPRO object_name=SAPMSSY0 max_results=3` lists screens |
+| `auth_object` | `ManageAuthObject action=update object_name=ZMCP_NOPE description=probe` answers `Authorization object ZMCP_NOPE not found` |
+| `transport_admin` | `ManageTransport action=remove_object object_type=PROG object_name=ZMCP_NONEXISTENT_PROBE transport_number=<yours>` answers `object_entry_doesnt_exist` |
+
+The last two only prove that the endpoint is reached and returns SAP's own error text; a real write is the full test.
 
 Deleting a node: `ManageSicfNode action=delete_sicf_node payload="name=textpool"`.
 
@@ -122,6 +159,7 @@ Copy the shape: a handler class implementing `IF_HTTP_EXTENSION` (CSRF-token han
 - Every endpoint runs as the **authenticated user**; SAP authorizations (`S_DEVELOP`, `S_TRANSPRT`, `S_ICF`, SU21 rights, …) apply exactly as in the GUI. Give the MCP user no more than a developer needs.
 - `ZCL_MCP_DISPATCH` is a static `CASE` over known actions — never dynamic class instantiation from the request. Keep it that way.
 - Mutating requests require the CSRF token; tokens expire after 15 minutes.
+- `lock_admin` can only ever see and delete the **connecting user's own** enqueue entries (`ENQUEUE_READ` with `guname = sy-uname`), but it has no orphan-vs-live test: it deletes a live lock of that user as readily as an orphan. Leave its SICF node uninstalled on systems where that is not acceptable; `UnlockObject` then works as before, without `force`.
 - Restrict network access to the SAP HTTPS port as you would for ADT itself.
 
 ## What is *not* included

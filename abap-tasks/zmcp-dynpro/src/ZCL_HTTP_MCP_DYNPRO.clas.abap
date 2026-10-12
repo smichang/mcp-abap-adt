@@ -1,25 +1,14 @@
 ************************************************************************
-* Program Type : Class (SICF handler)
-* Description  : SICF handler default_host/zmcp/dynpro - classic
-*                Dynpro read/write for the ManageDynpro MCP bridge.
-*                GET    ?program=X            -> JSON list of screens
-*                GET    ?program=X&dynnr=NNNN -> JSON screen definition
-*                POST   ?program=X&dynnr=NNNN&mode=create|update
-*                       [&trkorr=T], body = JSON screen definition
-*                DELETE ?program=X&dynnr=NNNN[&trkorr=T]
-*                GET    ?program=X&dynnr=NNNN&check=true -> SE51 check
-*                POST and check=true set header x-mcp-check:
-*                errors | warnings | ok
-* Author       : MCP
-* Created Date : 2026/10/02
-* Modifications:
-************************************************************************
-* Date        Author      RequestNo   Description
-* ---------   ---------   ----------  ----------------------------------
-* 2026/10/02  MCP                    Initial version (read phase)
-* 2026/10/02  MCP                    Write phase: POST / DELETE
-* 2026/10/02  MCP                    Consistency check after POST, GET check=true
-* 2026/10/02  MCP                    already-exists text without HTTP param name
+* SICF handler default_host/zmcp/dynpro - classic Dynpro read/write for the
+* ManageDynpro MCP tool.
+*   GET    ?program=X            -> JSON list of screens
+*   GET    ?program=X&dynnr=NNNN -> JSON screen definition
+*   POST   ?program=X&dynnr=NNNN&mode=create|update[&trkorr=T]
+*          body = JSON screen definition
+*   DELETE ?program=X&dynnr=NNNN[&trkorr=T]
+*   GET    ?program=X&dynnr=NNNN&check=true -> SE51 consistency check
+* POST and check=true set the response header x-mcp-check:
+* errors | warnings | ok
 ************************************************************************
 CLASS zcl_http_mcp_dynpro DEFINITION PUBLIC FINAL CREATE PUBLIC.
 
@@ -30,7 +19,7 @@ CLASS zcl_http_mcp_dynpro DEFINITION PUBLIC FINAL CREATE PUBLIC.
     " CSRF token store - same DB-backed pattern as ZCL_HTTP_MCP_AUTH_OBJECT /
     " ZCL_HTTP_MCP_TEXTPOOL (EXPORT/IMPORT TO MEMORY ID was live-rejected
     " on this node family: not a genuinely stateful ICF session). Keyed by
-    " sy-uname, already Basic-Auth verified by the SICF node's logon.
+    " sy-uname, already authenticated by the SICF node's logon.
     CONSTANTS co_csrf_ttl_sec TYPE i VALUE 900.
 
     CLASS-METHODS set_check_result
@@ -56,7 +45,7 @@ CLASS zcl_http_mcp_dynpro IMPLEMENTATION.
 
   METHOD if_http_extension~handle_request.
 
-    " NOTE ON AUTH: SICF enforces Basic Authentication before this method
+    " NOTE ON AUTH: SICF enforces its Alternative Logon Procedure before this method
     " runs; sy-uname is already the authenticated user. Object-level
     " authorization (S_DEVELOP) is checked in ZCL_MCP_DYNPRO.
 
@@ -90,16 +79,29 @@ CLASS zcl_http_mcp_dynpro IMPLEMENTATION.
       DATA lv_issued_at2 TYPE timestamp.
       DATA lv_now TYPE timestamp.
       IMPORT csrf_token TO lv_expected_token issued_at = lv_issued_at2 FROM DATABASE indx(zt) ID lv_csrf_id.
+      DATA(lv_import_rc) = sy-subrc.
       GET TIME STAMP FIELD lv_now.
-      IF sy-subrc <> 0 OR lv_expected_token IS INITIAL OR lv_csrf_hdr <> lv_expected_token
-         OR lv_now - lv_issued_at2 > co_csrf_ttl_sec.
+      " A TIMESTAMP is the number YYYYMMDDhhmmss, so "lv_now - lv_issued_at2"
+      " is not a count of seconds (it jumps across minute/hour boundaries).
+      " CL_ABAP_TSTMP=>SUBTRACT returns the real difference in seconds.
+      DATA lv_age TYPE tzntstmpl.
+      lv_age = co_csrf_ttl_sec + 1.
+      IF lv_import_rc = 0.
+        TRY.
+            lv_age = cl_abap_tstmp=>subtract( tstmp1 = lv_now tstmp2 = lv_issued_at2 ).
+          CATCH cx_parameter_invalid_range cx_parameter_invalid_type.
+            lv_age = co_csrf_ttl_sec + 1.
+        ENDTRY.
+      ENDIF.
+      IF lv_import_rc <> 0 OR lv_expected_token IS INITIAL OR lv_csrf_hdr <> lv_expected_token
+         OR lv_age > co_csrf_ttl_sec.
         server->response->set_status( code = 403 reason = 'Forbidden' ).
         server->response->set_cdata( `CSRF token validation failed` ).
         RETURN.
       ENDIF.
     ENDIF.
 
-    "20261002 MCP write phase - POST/DELETE added
+    " POST/DELETE added
     IF lv_method <> 'GET' AND lv_method <> 'POST' AND lv_method <> 'DELETE'.
       server->response->set_status( code = 405 reason = 'Method Not Allowed' ).
       server->response->set_cdata( `supported methods: GET, POST, DELETE` ).
@@ -156,7 +158,7 @@ CLASS zcl_http_mcp_dynpro IMPLEMENTATION.
             is_dynpro  = zcl_mcp_dynpro=>from_json( server->request->get_cdata( ) )
             iv_mode    = lv_mode
             iv_trkorr  = CONV trkorr( lv_trkorr ) ).
-          "20261002 MCP SE51 consistency check on the saved screen. It
+          " SE51 consistency check on the saved screen. It
           "commits implicitly, so it can only run after the write is final -
           "a blocking finding is reported, not rolled back.
           set_check_result( server     = server
@@ -254,7 +256,7 @@ CLASS zcl_http_mcp_dynpro IMPLEMENTATION.
       WHEN zcx_mcp_dynpro=>read_failed-msgno.
         ev_code = 500. ev_text = |Reading screen { lv_screen } failed|.
       WHEN zcx_mcp_dynpro=>already_exists-msgno.
-        "20261002 MCP 'mode' is this endpoint's HTTP parameter,
+        " 'mode' is this endpoint's HTTP parameter,
         "not the caller's - say what to do instead
         ev_code = 409. ev_text = |Screen { lv_screen } already exists - update it instead of creating it|.
       WHEN zcx_mcp_dynpro=>not_supported-msgno.

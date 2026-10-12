@@ -1,7 +1,7 @@
 ---
 name: mcp-abap-adt
 metadata:
-  version: "1.0"
+  version: "1.1"
 description: >-
   How to work on an SAP ABAP system through the mcp-abap-adt MCP server: find and
   read objects, change source safely (lock → write → unlock → activate), manage
@@ -48,6 +48,17 @@ endpoint that is not installed yet.
   parallel, from parallel sub-agents, or from two MCP connections at once. Reads are
   safe to parallelize. A result starting `Blocked: a stateful SAP MCP operation`
   means another call holds the gate — wait and retry; it never reached SAP.
+- **Never interrupt a lock-taking call or a test run** — no Ctrl-C, `pkill`, `kill` or
+  `timeout` on `npm test`/Jest/Node while it writes. A write is LOCK → PUT → UNLOCK in one
+  SAP session; cutting it between LOCK and UNLOCK leaves an edit lock and a session that
+  no ADT call can clear (see "Recovering from orphaned sessions and locks").
+- **After one failed stateful call, stop and diagnose.** Each retry that fails the same
+  way leaves one more orphaned lock. Read the error text once, then follow the recovery
+  section; do not loop.
+- **Live tests write only to fixtures they own** (`$TMP`, `ZMCP_*` names created by the
+  test itself). Never let a test pick its target by search pattern (`ZTEST*`): it will
+  rewrite someone else's program. Before the first `npm test` on a new system, grep the
+  tests for the object names they write to.
 - **Unlock before activate.** Activation fails on a still-locked object. If a lock
   error says `User X is currently editing`, and X is the configured SAP user, it is
   usually a leftover session: run `UnlockObject` alone, then retry. Never force
@@ -91,12 +102,47 @@ Verify column names with `GetMeta resource=TYPEINFO` / `DataPreview` before rely
 
 | Symptom | First move |
 |---|---|
-| `User X is currently editing …` | `UnlockObject` alone; if X is someone else, coordinate |
+| `User X is currently editing …` | `UnlockObject` alone; if X is someone else, coordinate. If X is the configured user and `UnlockObject` answers "not a dead lock", an orphaned session holds it — SM12 (see below) |
+| `HTTP 400` / `400 Session not found` on the PUT or UNLOCK right after a successful LOCK, plus "failed to release the lock" | The stateful ADT session was lost. Stop; follow "Recovering from orphaned sessions and locks" |
 | Activation `E` messages | read them in the response; fix source; for cross-referencing objects use `ActivateObjects` with all names |
 | `Blocked: a stateful SAP MCP operation …` | another mutation is running (maybe another window); wait and retry |
 | Transport refuses delete "contains locked objects" | `ManageTransport remove_object` on the stale entry, then delete |
 | Unknown/changed ADT behavior | probe with `curl` (stateless!) against the endpoint; see `docs/ADT_ENDPOINTS.md` |
 | Tool says endpoint `/zmcp/…` not found (404) | the optional ABAP-side endpoint is not installed — see `abap-tasks/README.md` |
+
+## Recovering from orphaned sessions and locks
+
+Symptom: `WriteProgram`/`UnlockObject` lock the object fine, then the next request gets
+`400 Session not found` (the raw page says "Service cannot be reached … 400 Session not
+found"), the result adds "failed to release the lock", and the object stays locked by the
+configured SAP user. The cause is **not fully understood**. Seen twice on the development
+system this skill was written on: SM04 showed sessions SAP no longer tracked, and the first
+episode ended at the moment the MCP server was restarted with `/mcp`. In a third case a
+hand-made LOCK→UNLOCK from a fresh Node process worked while the same calls through the
+running server failed, and a new server worked again. Treat it as a server/session fault,
+not as a problem with the object.
+
+1. **Stop writing.** Do not retry, do not run the test suite again, do not `pkill` anything.
+2. **Ask the user to restart the MCP server with `/mcp`** (it is cheap and has fixed the
+   symptom before), then clear the leftover locks of the SAP user:
+   - **`UnlockObject object_name=… force=true`** (needs the optional `lock_admin` endpoint †):
+     deletes the user's *own* SM12 entries for that object. Only after the user confirms
+     that no SAP GUI/Eclipse session of theirs is editing it — the endpoint cannot tell an
+     orphan from a live lock. Run `UnlockObject` again without `force` to confirm.
+   - or the user deletes them in **SM12** (and ends stale sessions of that user in SM04).
+   Plain `UnlockObject` cannot do this: it refuses while the owning session is alive, and an
+   ADT lock whose session is gone stays enqueued until it is deleted.
+3. **Verify with a brand-new `$TMP` name** (an existing object may still carry an orphan
+   lock): `WriteProgram` create + write + activate. Only then retry the real work.
+4. **To separate "SAP is broken" from "the MCP server is stale"**, run the same handler in
+   a fresh process from the repo root, e.g.
+   `node -e "require('./dist/handlers/handleUnlockObject').handleUnlockObject({object_name:'ZCL_X',object_type:'CLAS'}).then(r=>console.log(r.content[0].text))"`.
+   If the fresh process works and the MCP server does not, restart the server.
+5. Delete any probe objects you created, then report what you left behind.
+
+If a run of the repo's own tests leaves locks, the same steps apply; run the suite again
+only after they are gone, and only once. Repeated identical failures are not "flakiness"
+to retry through: the first failing call in a run is the one to read.
 
 ## Closing a task
 

@@ -3,8 +3,7 @@ CLASS zcl_mcp_transport_admin DEFINITION PUBLIC FINAL CREATE PUBLIC.
   PUBLIC SECTION.
     "! Moves/reassigns one repository object to a target task or request.
     "!
-    "! HISTORY: two dead ends tried and live-disproven before this one -
-    "! see the git history for the full account:
+    "! HISTORY: two dead ends tried and disproven before this one:
     "! (1) CTS_WBO_API_INSERT_OBJECTS (package SCTS_API, the same dialog-
     "!     free family CL_ICF_TREE=>DELETE_NODE's i_dark_transport path
     "!     uses) flatly REFUSES an object already checked out under a
@@ -22,8 +21,8 @@ CLASS zcl_mcp_transport_admin DEFINITION PUBLIC FINAL CREATE PUBLIC.
     "!     "reassign from X to Y?" on this exact conflict; headless mode
     "!     deliberately declines to answer that question either way.
     "!
-    "! The user pointed at the actual right feature: SE01/SE09's object-
-    "! list right-click "Move" (target-task popup). Its real engine is
+    "! The right feature is SE01/SE09's object-list right-click "Move"
+    "! (target-task popup). Its real engine is
     "! TR_MOVE_OBJECTS (function group STRI, package SCTS_REQ) - a
     "! dedicated move/reassign API, not an "insert" one. It also has a
     "! genuine headless path: the CALL SCREEN 0300 target-picker only

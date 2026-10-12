@@ -737,19 +737,23 @@ export class mcp_abap_adt_server {
           },
           {
             name: 'UnlockObject',
-            description: 'Recover from a stuck ADT edit lock (e.g. activation or WriteProgram failing with "User X is currently editing Y"). Attempts to acquire the lock and, if successful, immediately releases it — clearing a stray/reclaimable lock (typically left behind by an interrupted WriteProgram call, or a session that already timed out). If the lock cannot be acquired, the object is genuinely held by an active session: nothing is changed, and the response tells you whether the holder is your own configured SAP user (likely a leftover SAP GUI/ADT session — close it) or a different user (coordinate with them, or escalate to SAP Basis/SM12). Never force-unlocks another session\'s lock.',
+            description: 'Recover from a stuck ADT edit lock (e.g. activation or WriteProgram failing with "User X is currently editing Y"). Attempts to acquire the lock and, if successful, immediately releases it — clearing a stray/reclaimable lock (typically left behind by an interrupted WriteProgram call, or a session that already timed out). If the lock cannot be acquired, the object is genuinely held by an active session: nothing is changed, and the response tells you whether the holder is your own configured SAP user (likely a leftover SAP GUI/ADT session — close it) or a different user (coordinate with them, or escalate to SAP Basis/SM12). Never force-unlocks another user\'s lock; with force=true it deletes your own user\'s orphan SM12 entry for the object.',
             inputSchema: {
               type: 'object',
               properties: {
                 object_name: {
                   type: 'string',
                   description: 'Name of the locked ABAP object (program, include, function module, class, interface, ...). Example: ZRCU0001CF01'
-                }
-              },
+                },
                 object_type: {
                   type: 'string',
                   description: 'Optional. Disambiguates objects that share a name (e.g. RSPARAM is both a program and a structure): a type group such as PROG, CLAS, INTF, FUGR, TABL, or an exact ADT subtype such as PROG/P, TABL/DS, FUGR/FF. Without it an ambiguous name is refused and the candidates are listed — nothing is locked or deleted.'
                 },
+                force: {
+                  type: 'boolean',
+                  description: 'Optional, default false. When the lock cannot be acquired and is held by your OWN configured SAP user (an orphan from a dead session), delete it from SM12 via the standalone endpoint zmcp/lock_admin. Only your own user\'s locks on this object are ever deleted — never another developer\'s. There is NO orphan-vs-live check: a live editor session of the same user is deleted just like an orphan, so confirm no SAP GUI/Eclipse session of yours is editing the object first. Matches whole object names only.'
+                }
+              },
               required: ['object_name']
             }
           },

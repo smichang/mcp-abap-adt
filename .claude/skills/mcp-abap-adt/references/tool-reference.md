@@ -27,7 +27,7 @@ resource's own fields.
 | `GetDiagnostics` | `DUMP` | Short dumps | list (user/date/category) or `dump_id` |
 | | `TRACE` | SAT / SQL traces | list or `trace_id` |
 | | `GW_ERRORLOG` | Gateway (OData/Fiori) error log | the only tool reaching OData-layer errors |
-| `DataPreview` | — | Table data / freestyle SQL | cannot reference `MANDT`; no explicit column list without table qualifier; use `max_rows` instead of `UP TO n ROWS` |
+| `DataPreview` | — | Table data / freestyle SQL | cannot reference `MANDT`; no explicit column list without table qualifier; use `max_rows` instead of `UP TO n ROWS`. A column list needs an alias and `~`: `SELECT t~a, t~b FROM tab AS t WHERE t~k = '…'` (`tab~a` without alias fails with `"." is invalid here`); `OR` works; a very long `IN ('…','…')` list can fail with "text literal longer than 255 characters" — use several short conditions or `LIKE`; joins to text tables with extra literals can fail with `"TABLE" is invalid here`, so run two simple queries. `SELECT *` works and is the quickest way to inspect an unfamiliar table; with `output_file` the full result goes to a file |
 
 Cached results (`PACKAGE`, `WHEREUSED`, `TRANSPORT`, `DUMP`, `TRACE`) are marked
 `[cached]` and may be ~3 minutes stale; page with `offset` instead of raising `max_results`.
@@ -46,12 +46,12 @@ Do not use background mode for writes.
 | `ManageMessageClass` | SE91 classes and messages (`create`/`update`/`delete`) | `update` upserts messages in one language (master by default, or `language`); deleting messages is separate (`delete_messages`, all languages). Long texts cannot be written through ADT |
 | `ActivateObjects` | Mass activation in one request; `rfc_enabled` toggles an FM's Remote-Enabled flag | A standalone include needs a program that `INCLUDE`s it before the first activation |
 | `ManageTransport` | `create`, `release`, `set_text`, `delete`, `add_task`, `assign_object`, and † `move_object`, `merge`, `remove_object` | Release returns HTTP 200 even when aborted — read the report. `delete` only works on a transport with no object entries. `assign_object` works for PROG/CLAS/INTF/FUGR/INCL/TABL/DTEL/DOMA/DDLS only and silently reassigns an object from another transport |
-| `UnlockObject` | Recover a stuck edit lock | Tries LOCK then releases it; reports transport (`CORRNR`) and the lock holder. A name shared by several types needs `object_type` |
+| `UnlockObject` | Recover a stuck edit lock | Tries LOCK then releases it; reports transport (`CORRNR`) and the lock holder. A name shared by several types needs `object_type`. Without `force` it cannot clear a lock held by a live or orphaned session. `force=true` † deletes the connecting user's **own** SM12 entries matching the object through `default_host/zmcp/lock_admin` (never another user's; a live GUI/Eclipse lock of your own would go too, so ask first and close your own editors); run `UnlockObject` again without force to confirm. See SKILL.md "Recovering from orphaned sessions and locks" |
 | `DeleteObject` | Delete a repository object | Destructive. Verified on program, function module, domain; confirm other types on a disposable object first |
 | `TextPoolLang` † | Read/write a program's text pool in an explicit language | Merges per id+key; `delete_keys` removes a row (an empty value blanks it) |
 | `ManageAuthObject` † | Create/update an SU21 authorization object, fields and `ACTVT` activities | Fields lock once code or roles use the object (409); define the full field list first. No delete |
 | `ManageDynpro` † | Create/update/delete/check a classic screen of a customer program | Write the program's modules first; a result with consistency errors means the screen **is saved** — fix the program, then `action=check` |
-| `ManageSicfNode` † | `ping`, `create_sicf_node`, `delete_sicf_node` under `default_host/zmcp` | See `abap-tasks/README.md` |
+| `ManageSicfNode` † | `ping`, `create_sicf_node`, `delete_sicf_node` under `default_host/zmcp` | See `abap-tasks/README.md`. A node's *Alternative Logon Procedure* is `ICFSERVICE-LOG_FLAG = 'X'` together with `LOGIN_PROCESS = 'L'` — `'L'` alone still shows *Standard* in SICF; check with `DataPreview SELECT * FROM icfservice WHERE icfparguid = '<zmcp node guid>'`. Error texts of the dispatcher and the text pool need message classes `ZMCP_DISPATCH` / `ZMCP_TEXTPOOL`; without them errors read `I:ZMCP_DISPATCH:001 …`. Identical repeated `GET`s can be served from a cache — change the probe input to see a new text |
 
 ## Test and quality tools
 

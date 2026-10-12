@@ -80,8 +80,34 @@ export async function handleUnlockObject(args: any) {
             const configuredUser = getConfig().username?.toUpperCase() || '';
 
             const lines = [`Could not clear the lock on '${objectName}' (${resolved.type}).`, `Reason: ${reason}`];
+            const isOwnLock = !!editingUser && editingUser.toUpperCase() === configuredUser;
+            if (args?.force === true && isOwnLock) {
+                // force: delete our OWN user's SM12 entries for this object via the standalone
+                // endpoint (ZCL_HTTP_MCP_LOCK_ADMIN). It only reads/deletes locks of the logon user,
+                // so another developer's lock can never be touched.
+                removeCookie('sap-contextid');
+                try {
+                    const del = await makeAdtRequest(`${baseUrl}/zmcp/lock_admin`, 'POST', 20000, '', {
+                        object_name: objectName, delete: 'X'
+                    }, { 'Content-Type': 'text/plain; charset=utf-8' });
+                    const out = String(del.data ?? '').trim();
+                    const ok = /\bdeleted:/.test(out) && !/\bFAILED/.test(out);
+                    const head = ok
+                        ? `Lock on '${objectName}' (${resolved.type}) was an orphan; deleted from SM12 (own user only):`
+                        : `Could not clear the lock on '${objectName}' (${resolved.type}). force=true SM12 result:`;
+                    return { isError: !ok, content: [{ type: 'text', text: [head, out,
+                        'Run UnlockObject again (without force) to confirm the object is now free.'].join('\n') }] };
+                } catch (forceError) {
+                    const msg = forceError instanceof AxiosError ? String(forceError.response?.data ?? forceError.message) : String(forceError);
+                    lines.push(`force=true: SM12 delete FAILED — ${msg}`);
+                    return { isError: true, content: [{ type: 'text', text: lines.join('\n') }] };
+                }
+            }
+            if (args?.force === true && !isOwnLock) {
+                lines.push('force=true ignored: the lock is not held by your own configured SAP user, and force only ever deletes own-user locks.');
+            }
             if (editingUser && editingUser.toUpperCase() === configuredUser) {
-                lines.push(`This is your own configured SAP user (${configuredUser}) — likely an open SAP GUI (SE38/SE80) edit session or an ADT/Eclipse session still active under this account, not a dead lock. Close that session (or wait for it to time out) rather than retrying here.`);
+                lines.push(`This is your own configured SAP user (${configuredUser}) — likely an open SAP GUI (SE38/SE80) edit session or an ADT/Eclipse session still active under this account, not a dead lock. Close that session (or wait for it to time out) rather than retrying here. If you are sure it is an orphan (no open GUI/Eclipse session), call again with force=true to delete it from SM12.`);
             } else if (editingUser) {
                 lines.push(`This is a different user (${editingUser}) — do not force-unlock without checking with them. Coordinate directly, or ask SAP Basis to release it (SM12) if it is confirmed stale.`);
             }

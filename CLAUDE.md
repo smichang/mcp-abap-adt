@@ -479,7 +479,7 @@ One non-reentrant gate for **every handler that opens an ADT stateful `LOCK` ses
 
 **Windows note:** `os.tmpdir()` is per-user there, so the gate only sees connections on the same machine *and* same OS login. SAP's own per-object enqueue remains the authority across machines, logins, SAP GUI and Eclipse.
 
-**Not gated:** the stateless standalone-endpoint writers (`TextPoolLang`, `ManageAuthObject`, `ManageDynpro`, `ManageSicfNode`) — one HTTP call each, no shared session. A new handler that takes an ADT `LOCK` must wrap its core in this gate (template: `handleManageMessageClass`'s exported wrapper) **and** call `removeCookie('sap-contextid')` right before its `LOCK` POST (see Key Utilities).
+**Not gated:** the stateless standalone-endpoint writers (`TextPoolLang`, `ManageAuthObject`, `ManageDynpro`, `ManageSicfNode`, `UnlockObject force=true` → `lock_admin`) — one HTTP call each, no shared session. A new handler that takes an ADT `LOCK` must wrap its core in this gate (template: `handleManageMessageClass`'s exported wrapper) **and** call `removeCookie('sap-contextid')` right before its `LOCK` POST (see Key Utilities).
 
 ---
 
@@ -541,9 +541,11 @@ Recovers from a stuck ADT edit lock (`WriteProgram`'s `"User X is currently edit
 3a. **Lock acquired** → immediately `POST ?_action=UNLOCK` (stateless). Net effect: a free object is untouched; a stray/reclaimable lock is cleared. Reports `CORRNR`/`CORRTEXT` if registered in a transport.
 3b. **Lock failed** → no further action. Compares the editing user against our own `SAP_USERNAME` (match = likely our own leftover session; mismatch = a different developer, never force).
 
-**Never force-unlocks another session's lock** — the only state-changing outcome is 3a, and even there a genuinely-held lock's own LOCK attempt in step 2 would have failed, landing in 3b instead.
+**`force=true` (own-user orphans only):** when 3b fails and the holder is our own `SAP_USERNAME`, `UnlockObject` POSTs `object_name`+`delete=X` to the standalone SICF endpoint `default_host/zmcp/lock_admin` (`ZCL_HTTP_MCP_LOCK_ADMIN` → `ZCL_MCP_LOCK_ADMIN`, sources in `abap-tasks/zmcp-lock-admin/`; CSRF plumbing copied from `ZCL_HTTP_MCP_TRANSPORT_ADMIN`). ABAP side runs `ENQUEUE_READ` with `guname = sy-uname` and deletes matching entries via `ENQUE_DELETE` (one U — `ENQUEUE_DELETE` doesn't exist; this is SM12's own Delete FM, TABLES `ENQ` type `SEQG3`, exports `SUBRC`), so another user's lock is unreachable by construction; each entry is also re-checked for our user and client before it is deleted. Without `delete=X` the endpoint only reports. Matching is whole-name (client prefix and `U+FFFF` padding stripped), so `ZMCP_X` never hits `ZMCP_X2`. Then run `UnlockObject` again without force to confirm. There is no orphan-vs-live test on the ABAP side, so only use it when no GUI/Eclipse session of yours is open: a **live** lock of your own would be deleted too. `ENQUE_DELETE` live-verified 2026-10-12 on `TRDIR` (programs), `SEOCLSENQ` (class) and `T100`+`T100A` (message class) orphans left by failed test runs. The first version of this class called `ENQUEUE_DELETE` and failed with HTTP 500 "Function module not found" on first contact.
 
-**To see or clear SM12 entries, use SM12 or an RFC-based Basis tool, not ADT** — ADT has no lock-list endpoint and `UnlockObject` fails exactly when an orphan exists. After deleting a lock held by a still-open ADT session, also send that session's UNLOCK (or it lingers in SM04 until timeout).
+**Never force-unlocks another session's lock** — the only state-changing outcomes are 3a and the own-user `force` delete, and even in 3a a genuinely-held lock's own LOCK attempt in step 2 would have failed, landing in 3b instead.
+
+**To see all SM12 entries use SM12 or an RFC-based Basis tool** — ADT has no lock-list endpoint and `UnlockObject` fails exactly when an orphan exists. After deleting a lock held by a still-open ADT session, also send that session's UNLOCK (or it lingers in SM04 until timeout).
 
 ---
 

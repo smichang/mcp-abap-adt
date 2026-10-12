@@ -1,20 +1,7 @@
 ************************************************************************
-* Program Type : Class
-* Description  : Classic Dynpro (screen) read/write for the ManageDynpro
-*                MCP bridge. Wraps RPY_DYNPRO_READ / RPY_DYNPRO_INSERT /
-*                RS_SCRP_DELETE - standard ADT has no
-*                REST contract for classic screen content (see
-*               ).
-* Author       : MCP
-* Created Date : 2026/10/02
-* Modifications:
-************************************************************************
-* Date        Author      RequestNo   Description
-* ---------   ---------   ----------  ----------------------------------
-* 2026/10/02  MCP                    Initial version (read phase)
-* 2026/10/02  MCP                    Write phase: write/delete/from_json
-* 2026/10/02  MCP                    check() (SE51 consistency check) + next-screen retarget
-* 2026/10/02  MCP                    only screen types N/I/M writable
+* Classic Dynpro (screen) read/write for the ManageDynpro MCP tool. Wraps
+* RPY_DYNPRO_READ / RPY_DYNPRO_INSERT / RS_SCRP_DELETE and SE51's
+* consistency check - standard ADT has no REST contract for screen content.
 ************************************************************************
 CLASS zcl_mcp_dynpro DEFINITION PUBLIC FINAL CREATE PUBLIC.
 
@@ -38,9 +25,9 @@ CLASS zcl_mcp_dynpro DEFINITION PUBLIC FINAL CREATE PUBLIC.
 
     "! Lists all screens of a program, with the external type code from
     "! RPY_DYHEAD-TYPE: N normal, I subscreen, M modal dialog box,
-    "! S selection screen, J selection screen defined AS SUBSCREEN
-    "!. W = selection screen as modal dialog
-    "! per domain SCRPTYP.
+    "! S selection screen, J selection screen defined AS SUBSCREEN,
+    "! W selection screen as modal dialog. J and N are not in domain SCRPTYP,
+    "! so do not infer the type from the domain.
     CLASS-METHODS list
       IMPORTING
         iv_program        TYPE progname
@@ -67,7 +54,6 @@ CLASS zcl_mcp_dynpro DEFINITION PUBLIC FINAL CREATE PUBLIC.
       RETURNING
         VALUE(rv_json) TYPE string.
 
-    "20261002 MCP write phase - begin
     CLASS-METHODS from_json
       IMPORTING
         iv_json          TYPE string
@@ -118,10 +104,9 @@ CLASS zcl_mcp_dynpro DEFINITION PUBLIC FINAL CREATE PUBLIC.
         ev_warnings TYPE string
       RAISING
         zcx_mcp_dynpro.
-    "20261002 MCP write phase - end
 
   PRIVATE SECTION.
-    "20261002 MCP write phase - check_program takes the activity and
+    " check_program takes the activity and
     "returns the package; new helpers for write/delete
     CLASS-METHODS check_program
       IMPORTING
@@ -178,7 +163,7 @@ CLASS zcl_mcp_dynpro DEFINITION PUBLIC FINAL CREATE PUBLIC.
       RETURNING
         VALUE(rv_text) TYPE string.
 
-    "20261002 MCP one RPY_DYNPRO_INSERT call, never commits
+    " one RPY_DYNPRO_INSERT call, never commits
     CLASS-METHODS insert
       IMPORTING
         is_dynpro            TYPE ty_dynpro
@@ -189,7 +174,7 @@ CLASS zcl_mcp_dynpro DEFINITION PUBLIC FINAL CREATE PUBLIC.
         ev_rc                TYPE sysubrc
         ev_msg               TYPE string.
 
-    "20261002 MCP own pre-write check: SAP's #145 finding proved
+    " own pre-write check: SAP's #145 finding proved
     "unreliable right after a screen is created in the same session
     CLASS-METHODS check_subscreen_calls
       IMPORTING
@@ -224,7 +209,7 @@ CLASS zcl_mcp_dynpro IMPLEMENTATION.
           program = CONV #( iv_program ).
     ENDIF.
 
-    "20261002 MCP write phase - package also for function group main
+    " package also for function group main
     "programs (SAPL<group> is registered as R3TR FUGR <group>, not PROG)
     SELECT SINGLE devclass FROM tadir
       WHERE pgmid = 'R3TR' AND object = 'PROG' AND obj_name = @iv_program
@@ -349,7 +334,7 @@ CLASS zcl_mcp_dynpro IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD from_json.
-    "20261002 MCP write phase - new method
+    " new method
     IF iv_json IS INITIAL.
       RAISE EXCEPTION TYPE zcx_mcp_dynpro
         EXPORTING
@@ -406,7 +391,7 @@ CLASS zcl_mcp_dynpro IMPLEMENTATION.
     " lets a definition read from one program be written to another.
     ls_dynpro-header-program = iv_program.
     ls_dynpro-header-screen  = iv_dynnr.
-    "20261002 MCP a screen copied from another number keeps pointing to
+    " a screen copied from another number keeps pointing to
     "itself as next screen - retarget that self-reference to the new number
     IF is_dynpro-header-nextscreen IS NOT INITIAL
        AND is_dynpro-header-nextscreen = is_dynpro-header-screen.
@@ -434,7 +419,7 @@ CLASS zcl_mcp_dynpro IMPLEMENTATION.
           dynnr   = CONV #( iv_dynnr )
           detail  = `selection screens are generated from SELECTION-SCREEN statements - change the program source instead`.
     ENDIF.
-    "20261002 MCP any other unknown code (e.g. '1') was
+    " any other unknown code (e.g. '1') was
     "saved and generated - only normal / subscreen / modal are writable
     IF ls_dynpro-header-type IS INITIAL.
       ls_dynpro-header-type = 'N'.

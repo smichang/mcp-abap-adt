@@ -6,8 +6,7 @@ CLASS zcl_mcp_auth_object DEFINITION PUBLIC FINAL CREATE PUBLIC.
     " the DDIC CHAR10/CHAR4/CHAR10 fields (xuobject/xuobjclass/xufield) -
     " deliberately, so an over-length value can be rejected explicitly
     " (name_too_long / invalid_field) instead of silently truncating at
-    " the interface boundary the way WriteProgram's CLAS/FUGR/FUNC names
-    " once did before that bug was fixed. Conversion to the DDIC-typed
+    " the interface boundary. Conversion to the DDIC-typed
     " field happens only after validate_name/validate_fields has already
     " confirmed the length is safe.
     TYPES:

@@ -12,8 +12,6 @@ import { handleGetTransport } from './handlers/handleGetTransport';
 import { handleManageTransport } from './handlers/handleManageTransport';
 import { handleGetObjectVersion } from './handlers/handleGetObjectVersion';
 import { handleWriteProgram } from './handlers/handleWriteProgram';
-import { handleGetProgram } from './handlers/handleGetProgram';
-import { handleSearchObject } from './handlers/handleSearchObject';
 import { cleanup } from './lib/utils';
 
 // ─── helpers ───────────────────────────────────────────────────────────────
@@ -129,7 +127,7 @@ describe('GetTransport edge cases', () => {
         // lowercase input — should still fail with the uppercased number in the message
         const result = await handleGetTransport({ transport_number: 'dev0000000' });
         expect(result.isError).toBe(true);
-        expect(result.content[0].text).toMatch(/DEVK900123/i);
+        expect(result.content[0].text).toMatch(/DEV0000000/i);
     });
 
     it('2d. Non-existent transport_number returns clean error (not exception)', async () => {
@@ -260,29 +258,40 @@ describe('WriteProgram', () => {
         expect(text).toMatch(/lock|not found|does not exist/i);
     });
 
-    // ── Write + activation tests (require a real Z program) ──────────────
+    // ── Write + activation tests ──────────────────────────────────────────
+    // Write tests run only against a fixture program this suite owns in $TMP. They must never
+    // pick up someone else's program (an earlier version took the first ZTEST* hit and rewrote it).
+    const FIXTURE = 'ZMCP_WRITE_E2E';
+    const FIXTURE_SOURCE = `REPORT ${FIXTURE.toLowerCase()}.\nWRITE / 'hello'.\n`;
 
-    it('4f. Locate a writable Z program for live write tests', async () => {
-        const result = await handleSearchObject({ query: 'ZTEST*', maxResults: 20 });
-        if (!result.isError) {
-            const lines = (result.content[0].text as string)
-                .split('\n')
-                .filter(l => /\bPROG\b/.test(l));
-            if (lines.length > 0) {
-                targetProgram = lines[0].trim().split(/\s+/)[0];
-                const readResult = await handleGetProgram({ program_name: targetProgram });
-                if (!readResult.isError) {
-                    originalSource = readResult.content[0].text as string;
-                }
-            }
+    // Jest runs test files in parallel workers; the stateful-operation gate (writeLock.ts) refuses
+    // rather than queues while another file's write holds it. Retry that refusal (it never reached SAP).
+    const wp = async (args: any) => {
+        for (let i = 0; i < 60; i++) {
+            const r = await handleWriteProgram(args);
+            if (!(r.isError && /^Blocked: a stateful SAP MCP operation/.test(r.content?.[0]?.text || ''))) return r;
+            await new Promise(res => setTimeout(res, 2000));
         }
-        console.log(`  target: ${targetProgram || '(none found — live write tests skipped)'}`);
-        // Not a test failure — we just skip live write tests if nothing is found
+        return handleWriteProgram(args);
+    };
+
+    it('4f. Create/refresh the $TMP fixture program for live write tests', async () => {
+        const created = await wp({
+            program_name: FIXTURE,
+            source_code: FIXTURE_SOURCE,
+            description: 'MCP exception test fixture',
+            package_name: '$TMP',
+            activate: true,
+        });
+        expect(created.isError).toBe(false);
+        targetProgram = FIXTURE;
+        originalSource = FIXTURE_SOURCE;
+        console.log(`  target: ${targetProgram}`);
     });
 
     it('4g. Write unchanged source with activate=false succeeds', async () => {
         if (!targetProgram || !originalSource) return;
-        const text = ok(await handleWriteProgram({
+        const text = ok(await wp({
             program_name: targetProgram,
             source_code: originalSource,
             activate: false,
@@ -294,9 +303,9 @@ describe('WriteProgram', () => {
     it('4h. Write with syntax error and activate=true returns structured activation errors', async () => {
         if (!targetProgram) return;
         // "TYPED" is not valid ABAP — should be "DATA"
-        const result = await handleWriteProgram({
+        const result = await wp({
             program_name: targetProgram,
-            source_code: `REPORT ${targetProgram}.\nTYPED lv_x TYPE string.\nWRITE lv_x.`,
+            source_code: `REPORT ${targetProgram.toLowerCase()}.\nTYPED lv_x TYPE string.\nWRITE lv_x.`,
             activate: true,
         });
         expect(result.isError).toBe(true);
@@ -309,7 +318,7 @@ describe('WriteProgram', () => {
 
     it('4i. Restore original source after write tests', async () => {
         if (!targetProgram || !originalSource) return;
-        ok(await handleWriteProgram({
+        ok(await wp({
             program_name: targetProgram,
             source_code: originalSource,
             activate: true,

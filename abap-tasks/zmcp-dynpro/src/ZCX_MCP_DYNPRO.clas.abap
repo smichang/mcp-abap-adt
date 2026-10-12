@@ -1,15 +1,6 @@
 ************************************************************************
-* Program Type : Class (exception)
-* Description  : Exception class for the ManageDynpro MCP bridge
-*                (SICF default_host/zmcp/dynpro, ZCL_HTTP_MCP_DYNPRO)
-* Author       : MCP
-* Created Date : 2026/10/02
-* Modifications:
-************************************************************************
-* Date        Author      RequestNo   Description
-* ---------   ---------   ----------  ----------------------------------
-* 2026/10/02  MCP                    Initial version (read phase)
-* 2026/10/02  MCP                    Write phase: textids 006-010
+* Exception class for the ManageDynpro MCP tool (SICF default_host/zmcp/dynpro,
+* ZCL_HTTP_MCP_DYNPRO).
 ************************************************************************
 CLASS zcx_mcp_dynpro DEFINITION PUBLIC INHERITING FROM cx_static_check CREATE PUBLIC.
 

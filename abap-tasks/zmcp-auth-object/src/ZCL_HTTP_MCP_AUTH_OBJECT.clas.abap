@@ -8,7 +8,7 @@ CLASS zcl_http_mcp_auth_object DEFINITION PUBLIC FINAL CREATE PUBLIC.
     " (EXPORT/IMPORT TO MEMORY ID was live-rejected there: this SICF node
     " issues a session cookie but is not running a genuinely stateful ICF
     " session, so ABAP memory does not survive across requests). Keyed by
-    " sy-uname, already Basic-Auth verified by the SICF node's own logon
+    " sy-uname, already authenticated by the SICF node's own logon
     " procedure before this method ever runs.
     CONSTANTS co_csrf_ttl_sec TYPE i VALUE 900.
 
@@ -33,7 +33,7 @@ CLASS zcl_http_mcp_auth_object IMPLEMENTATION.
   METHOD if_http_extension~handle_request.
 
     " NOTE ON AUTH: nothing to do here - see ZCL_HTTP_MCP_TEXTPOOL's own
-    " note. SICF enforces Basic Authentication before this method runs;
+    " note. SICF enforces its Alternative Logon Procedure before this method runs;
     " sy-uname is already the authenticated user.
 
     DATA(lv_method) = server->request->get_header_field( name = '~request_method' ).
@@ -68,9 +68,22 @@ CLASS zcl_http_mcp_auth_object IMPLEMENTATION.
       DATA lv_issued_at2 TYPE timestamp.
       DATA lv_now TYPE timestamp.
       IMPORT csrf_token TO lv_expected_token issued_at = lv_issued_at2 FROM DATABASE indx(zt) ID lv_csrf_id.
+      DATA(lv_import_rc) = sy-subrc.
       GET TIME STAMP FIELD lv_now.
-      IF sy-subrc <> 0 OR lv_expected_token IS INITIAL OR lv_csrf_hdr <> lv_expected_token
-         OR lv_now - lv_issued_at2 > co_csrf_ttl_sec.
+      " A TIMESTAMP is the number YYYYMMDDhhmmss, so "lv_now - lv_issued_at2"
+      " is not a count of seconds (it jumps across minute/hour boundaries).
+      " CL_ABAP_TSTMP=>SUBTRACT returns the real difference in seconds.
+      DATA lv_age TYPE tzntstmpl.
+      lv_age = co_csrf_ttl_sec + 1.
+      IF lv_import_rc = 0.
+        TRY.
+            lv_age = cl_abap_tstmp=>subtract( tstmp1 = lv_now tstmp2 = lv_issued_at2 ).
+          CATCH cx_parameter_invalid_range cx_parameter_invalid_type.
+            lv_age = co_csrf_ttl_sec + 1.
+        ENDTRY.
+      ENDIF.
+      IF lv_import_rc <> 0 OR lv_expected_token IS INITIAL OR lv_csrf_hdr <> lv_expected_token
+         OR lv_age > co_csrf_ttl_sec.
         server->response->set_status( code = 403 reason = 'Forbidden' ).
         server->response->set_cdata( `CSRF token validation failed` ).
         RETURN.

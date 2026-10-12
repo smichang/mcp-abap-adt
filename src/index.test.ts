@@ -13,6 +13,7 @@ import { handleGetTransaction } from './handlers/handleGetTransaction';
 import { handleSearchObject } from './handlers/handleSearchObject';
 import { handleGetDynpro } from './handlers/handleGetDynpro';
 import { handleManageDynpro } from './handlers/handleManageDynpro';
+import { handleWriteProgram } from './handlers/handleWriteProgram';
 import { handleManageMessageClass } from './handlers/handleManageMessageClass';
 import { handleDataPreview } from './handlers/handleDataPreview';
 import { handleGetCode } from './handlers/handleGetCode';
@@ -155,25 +156,26 @@ describe('mcp_abap_adt_server - Integration Tests', () => {
     });
   });
   // Needs the ZMCP SICF endpoint default_host/zmcp/dynpro (ZCL_HTTP_MCP_DYNPRO).
-  // ZBCO0004 is a read-only fixture (custom module pool with 7 screens).
+  // SAPMSYST (SAP's logon module pool, 13 screens) is the read-only fixture: 0020 normal with
+  // containers, 0043 subscreen, 0070 modal with CHAIN/ENDCHAIN flow logic, 0100 normal.
   describe('handleGetDynpro', () => {
     it('should list the screens of a program', async () => {
-      const result = await handleGetDynpro({ object_name: 'ZBCO0004' });
+      const result = await handleGetDynpro({ object_name: 'SAPMSYST' });
       expect(result.isError).toBe(false);
-      expect(result.content[0].text).toContain('0210  I (subscreen)');
-      expect(result.content[0].text).toContain('0900  J (selection screen as subscreen)');
+      expect(result.content[0].text).toContain('0043  I (subscreen)');
+      expect(result.content[0].text).toContain('0070  M (modal dialog box)');
     });
 
     it('should render one screen with elements and flow logic', async () => {
-      const result = await handleGetDynpro({ object_name: 'ZBCO0004', dynnr: '210' });
+      const result = await handleGetDynpro({ object_name: 'SAPMSYST', dynnr: '70' });
       expect(result.isError).toBe(false);
-      expect(result.content[0].text).toContain('Screen ZBCO0004 0210');
-      expect(result.content[0].text).toContain('GW_ZCOT0143_DTL-CYCLE');
+      expect(result.content[0].text).toContain('Screen SAPMSYST 0070');
+      expect(result.content[0].text).toContain('XU180-FAMNAME');
       expect(result.content[0].text).toContain('CHAIN.');
     });
 
     it('should return round-trippable JSON with raw=true', async () => {
-      const result = await handleGetDynpro({ object_name: 'ZBCO0004', dynnr: '0100', raw: true });
+      const result = await handleGetDynpro({ object_name: 'SAPMSYST', dynnr: '0100', raw: true });
       expect(result.isError).toBe(false);
       const json = JSON.parse(result.content[0].text);
       expect(json.header.screen).toBe('0100');
@@ -181,23 +183,41 @@ describe('mcp_abap_adt_server - Integration Tests', () => {
     });
 
     it('should report a missing screen as an error', async () => {
-      const result = await handleGetDynpro({ object_name: 'ZBCO0004', dynnr: '9998' });
+      const result = await handleGetDynpro({ object_name: 'SAPMSYST', dynnr: '9998' });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('not found');
     });
   });
   // Writes only to the $TMP program ZMCP_DYNP_W_E2E (MODULEs STATUS_0100 /
-  // USER_COMMAND_0100, global OK_CODE) via default_host/zmcp/dynpro; the
-  // test deletes the screen again. Element shapes come from ZBCO0004 0100.
+  // USER_COMMAND_0100, globals OK_CODE and FCODE - the OK-code element of SAPMSYST 0070 is FCODE) via default_host/zmcp/dynpro; the
+  // test deletes the screen again. Element shapes come from SAPMSYST 0070.
   describe('handleManageDynpro', () => {
     const program = 'ZMCP_DYNP_W_E2E';
     const dynnr = '0190';
     const flow = 'PROCESS BEFORE OUTPUT.\n  MODULE status_0100.\nPROCESS AFTER INPUT.\n  MODULE user_command_0100.';
 
+    // The target program is a fixture the tests own: create it once in $TMP (WriteProgram overwrites,
+    // so this is idempotent). Retries because the stateful-operation gate refuses instead of queueing
+    // while another test file holds it.
+    beforeAll(async () => {
+      for (let i = 0; i < 60; i++) {
+        const r = await handleWriteProgram({
+          program_name: program, object_type: 'PROG', package_name: '$TMP',
+          description: 'MCP dynpro write test fixture',
+          source_code: 'PROGRAM zmcp_dynp_w_e2e.\nDATA ok_code TYPE sy-ucomm.\nDATA fcode TYPE sy-ucomm.\nMODULE status_0100 OUTPUT.\nENDMODULE.\nMODULE user_command_0100 INPUT.\nENDMODULE.\n',
+          activate: true,
+        });
+        if (!r.isError) return;
+        if (!/^Blocked: a stateful SAP MCP operation/.test(r.content?.[0]?.text || '')) throw new Error(r.content?.[0]?.text);
+        await new Promise(res => setTimeout(res, 1000));
+      }
+      throw new Error('could not create fixture program ' + program);
+    }, 90000);
+
     it('should create, round-trip, flag a missing MODULE, and delete a screen', async () => {
       await handleManageDynpro({ action: 'delete', program_name: program, dynnr });  // leftover from an aborted run
 
-      const src = await handleGetDynpro({ object_name: 'ZBCO0004', dynnr: '0100', raw: true });
+      const src = await handleGetDynpro({ object_name: 'SAPMSYST', dynnr: '0070', raw: true });
       const definition = JSON.parse(src.content[0].text);
       definition.containers = definition.containers.filter((c: any) => c.type === 'SCREEN');
 
@@ -225,7 +245,7 @@ describe('mcp_abap_adt_server - Integration Tests', () => {
     it('should change SE51 attributes via screen_attributes and show them', async () => {
       const d = '0191';
       await handleManageDynpro({ action: 'delete', program_name: program, dynnr: d });
-      const src = await handleGetDynpro({ object_name: 'ZBCO0004', dynnr: '0100', raw: true });
+      const src = await handleGetDynpro({ object_name: 'SAPMSYST', dynnr: '0070', raw: true });
       const definition = JSON.parse(src.content[0].text);
       definition.containers = definition.containers.filter((c: any) => c.type === 'SCREEN');
       const created = await handleManageDynpro({
@@ -254,7 +274,7 @@ describe('mcp_abap_adt_server - Integration Tests', () => {
 
     // Regression tests for dynpro validation fixes
     it('should refuse invalid screen types and input fields with requ_entry N before writing', async () => {
-      const src = await handleGetDynpro({ object_name: 'ZBCO0004', dynnr: '0100', raw: true });
+      const src = await handleGetDynpro({ object_name: 'SAPMSYST', dynnr: '0070', raw: true });
       const definition = JSON.parse(src.content[0].text);
       definition.containers = definition.containers.filter((c: any) => c.type === 'SCREEN');
 
@@ -275,11 +295,11 @@ describe('mcp_abap_adt_server - Integration Tests', () => {
 
     it('should write raw JSON only to output_file', async () => {
       const file = path.join(os.tmpdir(), `dynpro-raw-${process.pid}.json`);
-      const result = await handleGetCode({ resource: 'DYNPRO', object_name: 'ZBCO0004', dynnr: '0210', raw: true, output_file: file });
+      const result = await handleGetCode({ resource: 'DYNPRO', object_name: 'SAPMSYST', dynnr: '0070', raw: true, output_file: file });
       expect(result.isError).toBe(false);
       expect(result.content[0].text.length).toBeLessThan(400);
       expect(result.content[0].text).toContain(file);
-      expect(JSON.parse(fs.readFileSync(file, 'utf8')).header.screen).toBe('0210');
+      expect(JSON.parse(fs.readFileSync(file, 'utf8')).header.screen).toBe('0070');
       fs.unlinkSync(file);
     });
 

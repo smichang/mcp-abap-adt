@@ -36,7 +36,7 @@ CLASS zcl_http_mcp_textpool DEFINITION PUBLIC FINAL CREATE PUBLIC.
     " cookie issuance - a config change only the SICF admin can make, so
     " token storage here uses EXPORT/IMPORT TO DATABASE indx(zt) instead:
     " real persistence, independent of any session/cookie, keyed by the
-    " authenticated user (sy-uname, already Basic-Auth verified).
+    " authenticated user (sy-uname, already authenticated by SICF).
     CONSTANTS co_csrf_ttl_sec TYPE i VALUE 900.
 
     METHODS render_symbols
@@ -75,7 +75,7 @@ CLASS zcl_http_mcp_textpool IMPLEMENTATION.
   METHOD if_http_extension~handle_request.
 
     " NOTE ON AUTH: nothing to do here. SICF is configured with the
-    " same "Basic Authentication" logon procedure as /sap/bc/adt/* -
+    " same "Alternative Logon Procedure" as /sap/bc/adt/* -
     " the framework rejects unauthenticated requests before this method
     " ever runs. sy-uname is already the authenticated user by the time
     " we get here, which is exactly what RS_ACCESS_PERMISSION checks
@@ -89,7 +89,7 @@ CLASS zcl_http_mcp_textpool IMPLEMENTATION.
     " a bare token fetch. Any mutating request must then present that
     " same token (issued within the last co_csrf_ttl_sec seconds) or is
     " rejected before touching program/language logic. Token store is
-    " keyed by sy-uname (already Basic-Auth verified), not by session -
+    " keyed by sy-uname (already authenticated by SICF), not by session -
     " see the comment on co_csrf_ttl_sec for why.
     DATA(lv_csrf_hdr) = server->request->get_header_field( name = 'x-csrf-token' ).
     DATA lv_csrf_id TYPE c LENGTH 20.
@@ -118,9 +118,22 @@ CLASS zcl_http_mcp_textpool IMPLEMENTATION.
       DATA lv_issued_at2 TYPE timestamp.
       DATA lv_now TYPE timestamp.
       IMPORT csrf_token TO lv_expected_token issued_at = lv_issued_at2 FROM DATABASE indx(zt) ID lv_csrf_id.
+      DATA(lv_import_rc) = sy-subrc.
       GET TIME STAMP FIELD lv_now.
-      IF sy-subrc <> 0 OR lv_expected_token IS INITIAL OR lv_csrf_hdr <> lv_expected_token
-         OR lv_now - lv_issued_at2 > co_csrf_ttl_sec.
+      " A TIMESTAMP is the number YYYYMMDDhhmmss, so "lv_now - lv_issued_at2"
+      " is not a count of seconds (it jumps across minute/hour boundaries).
+      " CL_ABAP_TSTMP=>SUBTRACT returns the real difference in seconds.
+      DATA lv_age TYPE tzntstmpl.
+      lv_age = co_csrf_ttl_sec + 1.
+      IF lv_import_rc = 0.
+        TRY.
+            lv_age = cl_abap_tstmp=>subtract( tstmp1 = lv_now tstmp2 = lv_issued_at2 ).
+          CATCH cx_parameter_invalid_range cx_parameter_invalid_type.
+            lv_age = co_csrf_ttl_sec + 1.
+        ENDTRY.
+      ENDIF.
+      IF lv_import_rc <> 0 OR lv_expected_token IS INITIAL OR lv_csrf_hdr <> lv_expected_token
+         OR lv_age > co_csrf_ttl_sec.
         server->response->set_status( code = 403 reason = 'Forbidden' ).
         server->response->set_cdata( `CSRF token validation failed` ).
         RETURN.
