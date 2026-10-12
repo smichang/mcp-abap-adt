@@ -3,10 +3,15 @@
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `ManageSessions action=end` reported a successful end as `still there` when SAP reused the freed `tid` at once; the verification now also compares logon time and terminal (same fix as in the original project). The two `regex =` activation warnings became `pcre =`.
+
 ## [3.5.0] - 2026-10-12
 
 ### Added
-- `ManageSessions` (`list` / `end`): list and end the connection user's own ABAP sessions on every application server; standalone SICF endpoint `session_admin`. Own user, HTTP sessions only, never the calling session, no "end all"; ids are reused at once, so an id is only valid in the latest list. The `list` header also names the current session (system, client, user, language, application server). Live-verified here, including a real `end`; known flaw: the final `still there` check compares only `server:tid` and can be a false alarm.
+- `ManageSessions` (`list` / `end`): list and end the connection user's own ABAP sessions on every application server; standalone SICF endpoint `session_admin`. Own user, HTTP sessions only, never the calling session, no "end all"; ids are reused at once, so an id is only valid in the latest list. The `list` header also names the current session (system, client, user, language, application server). Live-verified here, including a real `end`; a freed `tid` can be reused at once, so the final check compares server, tid, logon time and terminal.
 - `UnlockObject force=true`: delete the connection user's own orphan SM12 locks through the standalone endpoint `lock_admin` (`ENQUE_DELETE`, whole-name match).
 - `scripts/adt-session-check.js`: bare-client check whether the SAP system keeps a stateful ADT session alive (LOCK → follow-up → UNLOCK); the cause of the intermittent `400 Session not found` is a fault of the SAP system, not of the tools.
 - Live integration tests for `ManageAuthObject` (against a permanent anchor object) and `ManageSessions`.

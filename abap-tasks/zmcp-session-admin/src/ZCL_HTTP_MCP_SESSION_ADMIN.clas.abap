@@ -72,7 +72,7 @@ CLASS zcl_http_mcp_session_admin IMPLEMENTATION.
     DATA(lv_min_s)  = condense( server->request->get_form_field( 'min_age' ) ).
     DATA lv_min_age TYPE i VALUE 2.
     IF lv_min_s IS NOT INITIAL.
-      IF NOT matches( val = lv_min_s regex = `[0-9]{1,5}` ).
+      IF NOT matches( val = lv_min_s pcre = `[0-9]{1,5}` ).
         server->response->set_status( code = 400 reason = 'Bad Request' ).
         server->response->set_cdata( `min_age must be a non-negative integer (minutes)` ).
         RETURN.

@@ -128,7 +128,14 @@ CLASS zcl_mcp_session_admin IMPLEMENTATION.
 
     DATA lt_ids TYPE STANDARD TABLE OF string WITH DEFAULT KEY.
     DATA(lv_nl) = cl_abap_char_utilities=>newline.
-    DATA lt_ended TYPE STANDARD TABLE OF string WITH DEFAULT KEY.
+    " identity of each session at the moment it was ended: a tid is only a slot number and SAP
+    " reuses a freed slot at once, so verification must compare logon time and terminal as well
+    TYPES: BEGIN OF ty_ended,
+             id   TYPE string,
+             time TYPE uzeit,
+             term TYPE string,
+           END OF ty_ended.
+    DATA lt_ended TYPE STANDARD TABLE OF ty_ended WITH DEFAULT KEY.
     DATA lv_msg TYPE c LENGTH 200.
     DATA lv_dest TYPE rfcdest.
     DATA lv_tid TYPE i.
@@ -147,7 +154,7 @@ CLASS zcl_mcp_session_admin IMPLEMENTATION.
     " validate every id's shape before anything is touched
     LOOP AT lt_ids ASSIGNING FIELD-SYMBOL(<id>).
       <id> = condense( <id> ).
-      IF NOT matches( val = <id> regex = `[^:\s]+:[0-9]{1,9}` ).
+      IF NOT matches( val = <id> pcre = `[^:\s]+:[0-9]{1,9}` ).
         RAISE EXCEPTION TYPE zcx_mcp_dispatch
           EXPORTING
             textid = zcx_mcp_dispatch=>bad_request
@@ -196,7 +203,7 @@ CLASS zcl_mcp_session_admin IMPLEMENTATION.
           OTHERS                = 4.
       CASE sy-subrc.
         WHEN 0.
-          APPEND lv_id TO lt_ended.
+          APPEND VALUE #( id = lv_id time = ls_s-time term = ls_s-term ) TO lt_ended.
         WHEN 1.
           rv_info = rv_info && |{ lv_id }: AUTHORITY_ERROR - TH_DELETE_USER refused the user, end it in SM04| && lv_nl.
         WHEN OTHERS.
@@ -206,11 +213,13 @@ CLASS zcl_mcp_session_admin IMPLEMENTATION.
 
     " verify
     list( IMPORTING et_sessions = lt_s ).
-    LOOP AT lt_ended INTO lv_id.
-      lv_server = substring_before( val = lv_id sub = `:` ).
-      lv_tid    = substring_after( val = lv_id sub = `:` ).
-      READ TABLE lt_s WITH KEY server = lv_server tid = lv_tid TRANSPORTING NO FIELDS.
-      rv_info = rv_info && |{ lv_id }: { COND string( WHEN sy-subrc = 0 THEN `still there` ELSE `ended` ) }| && lv_nl.
+    LOOP AT lt_ended INTO DATA(ls_ended).
+      lv_server = substring_before( val = ls_ended-id sub = `:` ).
+      lv_tid    = substring_after( val = ls_ended-id sub = `:` ).
+      " same tid with another time or terminal = a new session that reused the slot
+      READ TABLE lt_s WITH KEY server = lv_server tid = lv_tid time = ls_ended-time term = ls_ended-term
+        TRANSPORTING NO FIELDS.
+      rv_info = rv_info && |{ ls_ended-id }: { COND string( WHEN sy-subrc = 0 THEN `still there` ELSE `ended` ) }| && lv_nl.
     ENDLOOP.
 
   ENDMETHOD.
