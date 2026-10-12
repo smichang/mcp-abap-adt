@@ -1,0 +1,72 @@
+# Dependency directories
+node_modules/
+
+# Build output
+dist/
+build/
+package-lock.json
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.*
+!.env.example
+
+# Secrets keystore (opt-in alternative to .env — see scripts/setup-secrets.js)
+# secret*/ also covers named per-target keystores from `setup-secrets.js --out DIR`
+# (e.g. secret-800/ for a second SAP client — see CLAUDE.md "Connecting to a second
+# SAP client/system")
+secret/
+secret-*/
+*.key
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+
+# Editor directories and files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Backup files
+*.bak
+
+
+# MCP configuration (local only)
+.mcp.json
+
+# Gemini configuration (local only)
+.gemini/
+
+.codex/
+
+# Claude Code local settings (per-user permissions; .claude/skills IS shared/committed)
+.claude/settings.local.json
+
+# Local links / artifacts of skill installs (`npx skills add`, Cline rules link)
+.clinerules
+.agents/
+skills-lock.json

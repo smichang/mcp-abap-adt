@@ -1,0 +1,45 @@
+{
+  "name": "mcp-abap-adt",
+  "version": "3.4.1",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "build": "tsc -p tsconfig.json",
+    "start": "node ./dist/index.js",
+    "dev": "npx @modelcontextprotocol/inspector node ./dist/index.js"
+  },
+  "keywords": [
+    "abap",
+    "sap",
+    "adt",
+    "mcp",
+    "model-context-protocol"
+  ],
+  "author": "smichang",
+  "description": "ABAP ADT (ABAP Development Tools) MCP Server for interacting with SAP systems",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/smichang/mcp-abap-adt.git"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.10.10",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.1",
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "xml-js": "^1.6.11"
+  },
+  "bugs": {
+    "url": "https://github.com/smichang/mcp-abap-adt/issues"
+  },
+  "homepage": "https://github.com/smichang/mcp-abap-adt#readme"
+}
