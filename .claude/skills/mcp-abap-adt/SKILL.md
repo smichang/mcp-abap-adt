@@ -115,29 +115,44 @@ Verify column names with `GetMeta resource=TYPEINFO` / `DataPreview` before rely
 Symptom: `WriteProgram`/`UnlockObject` lock the object fine, then the next request gets
 `400 Session not found` (the raw page says "Service cannot be reached … 400 Session not
 found"), the result adds "failed to release the lock", and the object stays locked by the
-configured SAP user. The cause is **not fully understood**. Seen twice on the development
-system this skill was written on: SM04 showed sessions SAP no longer tracked, and the first
-episode ended at the moment the MCP server was restarted with `/mcp`. In a third case a
-hand-made LOCK→UNLOCK from a fresh Node process worked while the same calls through the
-running server failed, and a new server worked again. Treat it as a server/session fault,
-not as a problem with the object.
+configured SAP user. **This is an intermittent fault of the SAP system, not of the object,
+the tools or the tests**: with a bare HTTP client, LOCK → follow-up request → UNLOCK fails
+on *every* object (including ones that worked an hour earlier) while the fault is active,
+and works again when it ends, by itself and without any change on our side. Seen repeatedly
+on the development system; SM04 showed sessions SAP no longer tracked. A restart of the MCP
+server (`/mcp`) sometimes coincided with recovery, but a fresh process failed just the same
+while the fault was active, so the restart is not the fix.
+
+**Check before you write** (and before the test suite): `node scripts/adt-session-check.js
+/sap/bc/adt/oo/classes/<one of your own objects>` replays LOCK → GET → UNLOCK with a bare
+client and says HEALTHY or FAULT. It leaves a lock behind when the system is faulty — clear
+it with `UnlockObject force=true`. On FAULT do not write and do not run `npm test`; wait, or
+ask Basis to look at SM04/SM21 at that time.
 
 1. **Stop writing.** Do not retry, do not run the test suite again, do not `pkill` anything.
-2. **Ask the user to restart the MCP server with `/mcp`** (it is cheap and has fixed the
-   symptom before), then clear the leftover locks of the SAP user:
-   - **`UnlockObject object_name=… force=true`** (needs the optional `lock_admin` endpoint †):
+2. **Run `scripts/adt-session-check.js`** to see whether the fault is still active. Then
+   clear the leftover locks of the SAP user (a restart with `/mcp` is cheap but does not
+   cure an active fault):
+   - **`UnlockObject object_name=… force=true`** (needs the optional `lock_admin` endpoint †;
+     it matches whole names only, so list locks by the exact name, never by a prefix —
+     a prefix query answers "no lock" even when the object is locked):
      deletes the user's *own* SM12 entries for that object. Only after the user confirms
      that no SAP GUI/Eclipse session of theirs is editing it — the endpoint cannot tell an
      orphan from a live lock. Run `UnlockObject` again without `force` to confirm.
-   - or the user deletes them in **SM12** (and ends stale sessions of that user in SM04).
+   - or the user deletes them in **SM12**.
+   - **Locks and sessions are separate.** Every failed stateful call also leaves an ABAP
+     session of that user in **SM04** (an ADT/HTTP session, usually marked as still in use).
+     Deleting the lock — with `force` or in SM12 — does not end it; the session lingers until
+     the HTTP session timeout. End the stale ones with `ManageSessions` (`list` first, then
+     `end` with `server:tid` ids you recognize by client IP and age — never the user's own live
+     Eclipse/GUI sessions), or in SM04. Count them if the fault repeats: they pile up.
    Plain `UnlockObject` cannot do this: it refuses while the owning session is alive, and an
    ADT lock whose session is gone stays enqueued until it is deleted.
 3. **Verify with a brand-new `$TMP` name** (an existing object may still carry an orphan
    lock): `WriteProgram` create + write + activate. Only then retry the real work.
-4. **To separate "SAP is broken" from "the MCP server is stale"**, run the same handler in
-   a fresh process from the repo root, e.g.
-   `node -e "require('./dist/handlers/handleUnlockObject').handleUnlockObject({object_name:'ZCL_X',object_type:'CLAS'}).then(r=>console.log(r.content[0].text))"`.
-   If the fresh process works and the MCP server does not, restart the server.
+4. **To separate "SAP is faulty" from "the MCP server is stale"**, use the bare-client check
+   from step 2. If it says HEALTHY but the MCP server still fails, restart the server with
+   `/mcp`; if it says FAULT, nothing on our side will help.
 5. Delete any probe objects you created, then report what you left behind.
 
 If a run of the repo's own tests leaves locks, the same steps apply; run the suite again

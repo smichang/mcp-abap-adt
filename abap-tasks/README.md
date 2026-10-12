@@ -10,6 +10,7 @@ Most tools in this server talk to stock ADT and need nothing installed on SAP. A
 | `ManageTransport` `move_object` / `merge` / `remove_object` | `transport_admin` | `ZCL_HTTP_MCP_TRANSPORT_ADMIN` | `ZCL_MCP_TRANSPORT_ADMIN` |
 | `ManageDynpro`, `GetCode resource=DYNPRO` | `dynpro` | `ZCL_HTTP_MCP_DYNPRO` | `ZCL_MCP_DYNPRO`, `ZCX_MCP_DYNPRO` |
 | `UnlockObject force=true` (delete own orphan SM12 locks) | `lock_admin` | `ZCL_HTTP_MCP_LOCK_ADMIN` | `ZCL_MCP_LOCK_ADMIN` (raises `ZCX_MCP_DISPATCH`) |
+| `ManageSessions` (list / end own ABAP sessions) | `session_admin` | `ZCL_HTTP_MCP_SESSION_ADMIN` | `ZCL_MCP_SESSION_ADMIN` (raises `ZCX_MCP_DISPATCH`) |
 
 Naming scheme: package `ZMCP`, SICF parent node `zmcp`, handler `ZCL_HTTP_MCP_<X>`, logic `ZCL_MCP_<X>`, exception `ZCX_MCP_<X>`, message class `ZMCP_<X>`. If you need another prefix, rename consistently — the URLs `/zmcp/<node>` are hard-coded in `src/handlers/`.
 
@@ -134,6 +135,7 @@ ManageSicfNode action=create_sicf_node method=POST
 | Transport admin | `ZCL_MCP_TRANSPORT_ADMIN`, `ZCL_HTTP_MCP_TRANSPORT_ADMIN` | `transport_admin` |
 | Dynpro | `ZCX_MCP_DYNPRO`, `ZCL_MCP_DYNPRO`, `ZCL_HTTP_MCP_DYNPRO` | `dynpro` |
 | Lock admin (SM12 cleanup, own user) | `ZCL_MCP_LOCK_ADMIN`, `ZCL_HTTP_MCP_LOCK_ADMIN` (needs the dispatcher's `ZCX_MCP_DISPATCH`) | `lock_admin` |
+| Session admin (SM04 list/end, own user) | `ZCL_MCP_SESSION_ADMIN`, `ZCL_HTTP_MCP_SESSION_ADMIN` (needs the dispatcher's `ZCX_MCP_DISPATCH`) | `session_admin` |
 
 Activate each group with one `ActivateObjects` call (the exception class and core class must be active before the handler compiles).
 
@@ -159,6 +161,7 @@ Copy the shape: a handler class implementing `IF_HTTP_EXTENSION` (CSRF-token han
 - Every endpoint runs as the **authenticated user**; SAP authorizations (`S_DEVELOP`, `S_TRANSPRT`, `S_ICF`, SU21 rights, …) apply exactly as in the GUI. Give the MCP user no more than a developer needs.
 - `ZCL_MCP_DISPATCH` is a static `CASE` over known actions — never dynamic class instantiation from the request. Keep it that way.
 - Mutating requests require the CSRF token; tokens expire after 15 minutes.
+- `session_admin` can only ever list and end the **connecting user's own HTTP sessions** (rows filtered to `sy-uname`/`sy-mandt`, kind `HTTP` only, never the calling session, never `tid = -1`, no "end all"), but it cannot tell your open Eclipse/ADT session from a stale one — end only ids you recognize. The user needs the authorization `TH_DELETE_USER` checks; without it the tool answers `AUTHORITY_ERROR` and points to SM04.
 - `lock_admin` can only ever see and delete the **connecting user's own** enqueue entries (`ENQUEUE_READ` with `guname = sy-uname`), but it has no orphan-vs-live test: it deletes a live lock of that user as readily as an orphan. Leave its SICF node uninstalled on systems where that is not acceptable; `UnlockObject` then works as before, without `force`.
 - Restrict network access to the SAP HTTPS port as you would for ADT itself.
 

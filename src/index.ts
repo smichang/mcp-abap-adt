@@ -25,6 +25,7 @@ import { handleActivateObjects } from './handlers/handleActivateObjects';
 import { handleRunATCCheck } from './handlers/handleRunATCCheck';
 import { handleRunUnitTest } from './handlers/handleRunUnitTest';
 import { handleUnlockObject } from './handlers/handleUnlockObject';
+import { handleManageSessions } from './handlers/handleManageSessions';
 import { handleDeleteObject } from './handlers/handleDeleteObject';
 import { handleTextPoolLang } from './handlers/handleTextPoolLang';
 import { handleManageSicfNode } from './handlers/handleManageSicfNode';
@@ -758,6 +759,19 @@ export class mcp_abap_adt_server {
             }
           },
           {
+            name: 'ManageSessions',
+            description: 'List and end the connection user\'s OWN stale ABAP sessions (SM04) on every application server — the session half of recovering from a failed stateful ADT call (UnlockObject force=true only removes the SM12 lock, not the session). action=list shows each session as server:tid with kind, client IP (term), time and age. action=end ends the given ids. Own user only, HTTP/ADT sessions only (GUI and other kinds are refused — use SM04); the session carrying the request and sessions younger than min_age_minutes (default 2) are refused; every id is re-validated against a fresh list. There is deliberately no "end all". Your own open Eclipse/ADT or GUI-in-browser sessions are HTTP sessions too and look the same — end only ids you recognize (by term and age). List first.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                action: { type: 'string', enum: ['list', 'end'], description: '"list" (default use) or "end".' },
+                ids: { type: 'array', items: { type: 'string' }, description: 'action=end only. Session ids exactly as printed by action=list, "server:tid".' },
+                min_age_minutes: { type: 'integer', minimum: 0, description: 'action=end only. Refuse sessions younger than this (default 2) so a client mid-sequence is not cut off.' }
+              },
+              required: ['action']
+            }
+          },
+          {
             name: 'DeleteObject',
             description: 'Deletes an ABAP repository object (e.g. a function module) from the system. Auto-detects the object via search, locks it, issues the ADT delete, and reports the result. Destructive and hard to reverse — confirm with the user before calling. Safety guard: an inactive class is refused until its CTS/deletion entry and inactive-object entry are removed through SAP GUI/Eclipse ADT; after that cleanup, the repository object can be deleted and its name recreated. Note: deleting a member of a container (e.g. a function module inside a function group) requires the delete to be recorded under whichever transport currently holds the CONTAINER\'s own CTS lock (e.g. R3TR FUGR), which may differ from the transport holding the member\'s own registration — a conflict here is reported with the blocking transport number so it can be resolved (release it, or retry with it) rather than guessed at.',
             inputSchema: {
@@ -998,6 +1012,8 @@ export class mcp_abap_adt_server {
           return await handleRunATCCheck(request.params.arguments);
         case 'RunUnitTest':
           return await handleRunUnitTest(request.params.arguments);
+        case 'ManageSessions':
+          return await handleManageSessions(request.params.arguments);
         case 'UnlockObject':
           return await handleUnlockObject(request.params.arguments);
         case 'DeleteObject':

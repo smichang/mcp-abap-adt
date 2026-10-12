@@ -481,7 +481,7 @@ One non-reentrant gate for **every handler that opens an ADT stateful `LOCK` ses
 
 **Windows note:** `os.tmpdir()` is per-user there, so the gate only sees connections on the same machine *and* same OS login. SAP's own per-object enqueue remains the authority across machines, logins, SAP GUI and Eclipse.
 
-**Not gated:** the stateless standalone-endpoint writers (`TextPoolLang`, `ManageAuthObject`, `ManageDynpro`, `ManageSicfNode`, `UnlockObject force=true` → `lock_admin`) — one HTTP call each, no shared session. A new handler that takes an ADT `LOCK` must wrap its core in this gate (template: `handleManageMessageClass`'s exported wrapper) **and** call `removeCookie('sap-contextid')` right before its `LOCK` POST (see Key Utilities).
+**Not gated:** the stateless standalone-endpoint writers (`TextPoolLang`, `ManageAuthObject`, `ManageDynpro`, `ManageSicfNode`, `UnlockObject force=true` → `lock_admin`, `ManageSessions` → `session_admin`) — one HTTP call each, no shared session. A new handler that takes an ADT `LOCK` must wrap its core in this gate (template: `handleManageMessageClass`'s exported wrapper) **and** call `removeCookie('sap-contextid')` right before its `LOCK` POST (see Key Utilities).
 
 ---
 
@@ -547,9 +547,23 @@ Recovers from a stuck ADT edit lock (`WriteProgram`'s `"User X is currently edit
 
 **Never force-unlocks another session's lock** — the only state-changing outcomes are 3a and the own-user `force` delete, and even in 3a a genuinely-held lock's own LOCK attempt in step 2 would have failed, landing in 3b instead.
 
-**To see all SM12 entries use SM12 or an RFC-based Basis tool** — ADT has no lock-list endpoint and `UnlockObject` fails exactly when an orphan exists. After deleting a lock held by a still-open ADT session, also send that session's UNLOCK (or it lingers in SM04 until timeout).
+**`force` removes the lock, not the session.** The failed stateful call that orphaned the lock also left an ABAP session of the user in SM04; deleting the SM12 entry does not end it and it lingers until the HTTP session timeout — end it with [`ManageSessions`](#managesessions-tool) (list first, then end by `server:tid`) or in SM04. **To see all SM12 entries use SM12 or an RFC-based Basis tool** — ADT has no lock-list endpoint and `UnlockObject` fails exactly when an orphan exists. After deleting a lock held by a still-open ADT session, also send that session's UNLOCK (or it lingers in SM04 until timeout).
 
 ---
+
+## ManageSessions Tool
+
+Lists and ends the connection user's **own** stale ABAP sessions (SM04) on **every** application server — the session half of recovering from a failed stateful ADT call (`UnlockObject force=true` removes only the SM12 lock). `handleManageSessions.ts` → `POST …/zmcp/session_admin` (`ZCL_HTTP_MCP_SESSION_ADMIN` → `ZCL_MCP_SESSION_ADMIN`, sources in `abap-tasks/zmcp-session-admin/`, SICF node created with `ManageSicfNode`). Standalone endpoint, one stateless call per action, so **not** behind the stateful-operation gate. Developed in the private sibling project first and cloned here.
+
+- `action=list` → one line per session, id = `server:tid`, `kind` (`HTTP` = type 202, `GUI` = 4, else `type<n>`), `term` (client IP), `time` (logon time of day only — the day is unknown, `age` wraps at 24 h), `CURRENT` marks the session carrying the request. Built from `TH_SERVER_LIST` + `TH_USER_LIST DESTINATION <server>`, rows filtered to `sy-uname`/`sy-mandt`; an unreachable server is reported under `PROBLEMS`, never fails the call. The `type32` rows are RFC contexts created by the list calls themselves.
+- `action=end` (`ids` required, `min_age_minutes` default 2) → `TH_DELETE_USER` per id. ABAP-side safety rules: fresh list before every id; unknown → "not found"; `CURRENT`, non-`HTTP` kinds and sessions younger than `min_age` are REFUSED; `tid` is never `-1`; `AUTHORITY_ERROR` is reported as "use SM04"; a final list reports `ended`/`still there`. **No "end all".** Refusals/failures set `isError`.
+- Your own open Eclipse/ADT sessions are HTTP sessions too and look identical — end only ids you recognize by `term` and `age`.
+
+**What leaves a lingering session (probed 2026-10-12):** a **stateful** request (`X-sap-adt-sessiontype: stateful`) does — even one refused with 403 — while a plain `GET` or a `GET` with `x-csrf-token: fetch` leaves none (the list stayed at the same size). Idle HTTP sessions also disappear by themselves after the SAP session timeout (57 → 34 in about 30 minutes).
+
+**`tid` is a slot number and is reused immediately.** In one run tid 47 was the HTTP session carrying the request in one call and an RFC context (`type32`) in the next; asking to end the id of a session that had just been ended answered `REFUSED - kind type32 …`. An id is only meaningful in the list it came from, which is why `end` re-validates every id against a fresh list, and why the minimum age exists. **Known flaw (found 2026-10-12 through the MCP tool):** the final check compares only `server:tid`, so when the freed slot is reused at once — here by the very session carrying the verification request — it answers `still there` and sets `isError` although the session was ended (the next `list` showed tid 28 with a new logon time, the old one gone). Treat `still there` as unproven and compare logon time in a fresh `list`; the fix is to compare `tid` **and** logon time `time` (and `term`) in the verification step.
+
+**Verified live 2026-10-12** (one application server on this system): `list`; malformed or missing `ids`; an unknown id; refusals for the current session, a GUI session (the user's SM04) and an RFC context; the default minimum age refusing a 0-minute-old session; and a real `end` of a throwaway session created by a stateful `POST` without CSRF token — answer `ended`, absent from the next list, and `TH_DELETE_USER` raised no authority error for the MCP user. **Not verified:** a second application server (only one is registered here), and the effect of ending a session on a client that is mid-sequence. `activate` shows two warnings that `regex =` uses the deprecated POSIX standard (`pcre =` would remove them).
 
 ## DeleteObject Tool
 

@@ -18,7 +18,7 @@ This project exists for three goals:
    | Transport | `ManageTransport` (create, rename, assign, move, merge, release, delete) |
    | Activate | `ActivateObjects` (mass activation, RFC toggle) |
    | Test & quality | `RunUnitTest`, `RunATCCheck` |
-   | Diagnose & recover | `GetDiagnostics` (dumps, traces, gateway errors), `UnlockObject`, `DeleteObject` |
+   | Diagnose & recover | `GetDiagnostics` (dumps, traces, gateway errors), `UnlockObject` (incl. `force`), `ManageSessions`, `DeleteObject` |
    | Extend SAP side | `ManageSicfNode` plus the optional ABAP endpoints in [`abap-tasks/`](abap-tasks) |
 
 3. **Recursive self-improvement.** If a manual step is still left — a transaction you had to open, a lock you had to clear in SM12, a setting only SAP GUI exposes — that is a bug in this project, not a fact of life. The agent should:
@@ -141,7 +141,7 @@ Use the mcp-abap-adt MCP server and search for ABAP object SAPMV45A.
 
 ## 3. Optional: ABAP-side Endpoints
 
-A few tools (`ManageAuthObject`, `ManageDynpro`, `TextPoolLang`, `ManageSicfNode`, and the `move_object`/`merge`/`remove_object` actions of `ManageTransport`) cover things standard ADT does not expose. They call small custom SICF services whose source is in [`abap-tasks/`](abap-tasks). To use them, follow [`abap-tasks/README.md`](abap-tasks/README.md): package `ZMCP`, one manual SICF step, after which the AI installs the rest under `default_host/zmcp`; every other tool works against stock ADT.
+A few tools (`ManageAuthObject`, `ManageDynpro`, `TextPoolLang`, `ManageSicfNode`, `ManageSessions`, `UnlockObject force=true`, and the `move_object`/`merge`/`remove_object` actions of `ManageTransport`) cover things standard ADT does not expose. They call small custom SICF services whose source is in [`abap-tasks/`](abap-tasks). To use them, follow [`abap-tasks/README.md`](abap-tasks/README.md): package `ZMCP`, one manual SICF step, after which the AI installs the rest under `default_host/zmcp`; every other tool works against stock ADT.
 
 ## Agent Skill
 

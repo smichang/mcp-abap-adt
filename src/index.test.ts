@@ -16,6 +16,7 @@ import { handleManageDynpro } from './handlers/handleManageDynpro';
 import { handleWriteProgram } from './handlers/handleWriteProgram';
 import { handleManageMessageClass } from './handlers/handleManageMessageClass';
 import { handleManageAuthObject } from './handlers/handleManageAuthObject';
+import { handleManageSessions } from './handlers/handleManageSessions';
 import { handleDataPreview } from './handlers/handleDataPreview';
 import { handleGetCode } from './handlers/handleGetCode';
 import * as fs from 'fs';
@@ -308,6 +309,35 @@ describe('mcp_abap_adt_server - Integration Tests', () => {
       const result = await handleManageDynpro({ action: 'update', program_name: 'SAPLSPO1', dynnr: '0100', flow_logic: flow });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('customer programs');
+    });
+  });
+
+  // Needs the ZMCP SICF endpoint default_host/zmcp/session_admin.
+  describe('handleManageSessions (refusals + list only; ending real sessions is a manual check)', () => {
+    it('list returns the header and only the logon user\'s sessions', async () => {
+      const r = await handleManageSessions({ action: 'list' });
+      expect(r.isError).toBe(false);
+      const text = r.content[0].text;
+      const header = text.split('\n')[0];
+      expect(header).toMatch(/^Sessions of \S+ \(client \d+\): \d+\. Id for "end" = server:tid/);
+      const user = header.match(/^Sessions of (\S+)/)![1];
+      expect(user.toUpperCase()).toBe(String(process.env.SAP_USERNAME || user).toUpperCase());
+    });
+    it('end without ids is an error', async () => {
+      const r = await handleManageSessions({ action: 'end' });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/ids is required/);
+    });
+    it('end with a malformed id is an error, including the tid -1 "all sessions" form', async () => {
+      for (const id of ['bad', 'srv:-1', 'srv:', ':5']) {
+        const r = await handleManageSessions({ action: 'end', ids: [id] });
+        expect(r.isError).toBe(true);
+        expect(r.content[0].text).toMatch(/malformed id/);
+      }
+    });
+    it('end with an unknown id changes nothing', async () => {
+      const r = await handleManageSessions({ action: 'end', ids: ['no_such_server_XXX:999999'] });
+      expect(r.content[0].text).toMatch(/not found/);
     });
   });
 

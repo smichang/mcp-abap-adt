@@ -3,6 +3,23 @@
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `ManageSessions` (`list` / `end`): list and end the connection user's own ABAP sessions on every application server; standalone SICF endpoint `session_admin`. Own user, HTTP sessions only, never the calling session, no "end all".
+- `UnlockObject force=true`: delete the connection user's own orphan SM12 locks through the standalone endpoint `lock_admin` (`ENQUE_DELETE`, whole-name match).
+- `scripts/adt-session-check.js`: bare-client check whether the SAP system keeps a stateful ADT session alive (LOCK → follow-up → UNLOCK); the cause of the intermittent `400 Session not found` is a fault of the SAP system, not of the tools.
+- Live integration tests for `ManageAuthObject` (against a permanent anchor object) and `ManageSessions`.
+
+### Fixed
+- CSRF expiry in all ABAP HTTP handlers compared raw `TIMESTAMP` values instead of seconds (`CL_ABAP_TSTMP=>SUBTRACT` now).
+- `create_sicf_node` sets `LOG_FLAG`, so generated nodes use the Alternative Logon Procedure.
+- `UnlockObject` schema: `object_type` was outside `properties`.
+- Tests no longer rewrite a program found by search pattern; they create their own `$TMP`/`ZMCP_*` fixtures.
+
+### Changed
+- `abap-tasks/README.md` corrected after a first install on a clean system (message classes `ZMCP_DISPATCH`/`ZMCP_TEXTPOOL` are required for readable errors); project skill extended with the recovery procedure for orphaned sessions and locks.
+
 ## [3.4.1]
 
 First public release. Derived from [mario-andreschak/mcp-abap-adt](https://github.com/mario-andreschak/mcp-abap-adt) with a large set of additions:
