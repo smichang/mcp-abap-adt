@@ -53,8 +53,8 @@ Note: the renamed classes (`ZCL_HTTP_MCP_*`, `ZCL_MCP_*`, `ZCX_MCP_*`, `/zmcp/<n
 ## 4. Release hygiene
 
 - [ ] GitHub description and topics
-- [ ] Tag `v3.5.0` (matches `package.json`; same version number as the private sibling project, whose 3.5.0 contains the same ManageSessions work) and write release notes from `CHANGELOG.md`
-- [ ] Decide on npm publishing (package name is `mcp-abap-adt`, unpublished)
+- [x] Tag `v3.5.0` pushed (commit `2e7241a`); GitHub release page with notes and the repo description/topics still to be set by hand on github.com
+- [x] npm publishing: decided against for now (unpublished; the name may belong to the upstream project; users clone and build)
 - [x] `Dockerfile` and `smithery.yaml` removed (decision: no container support; the old image would have baked a local `.env` into itself)
 - [ ] Trim `CLAUDE.md` if it is too internal for a public repo
 - [ ] Optional: add `README.zh-TW.md` again, scrubbed (the private repo has one)
