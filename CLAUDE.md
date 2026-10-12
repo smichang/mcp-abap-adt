@@ -5,6 +5,7 @@
 ```bash
 npm run build        # compile TypeScript → dist/
 npm test             # run integration tests (requires live SAP system via .env)
+npm run check:skill  # keep the agent skill within its size budget
 npm run start        # run server (stdio MCP mode)
 npm run dev          # run with MCP Inspector at localhost:5173
 ```

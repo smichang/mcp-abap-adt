@@ -48,13 +48,7 @@ Note: the renamed classes (`ZCL_HTTP_MCP_*`, `ZCL_MCP_*`, `ZCX_MCP_*`, `/zmcp/<n
 
 - [x] Skill content ported from the private project's in-house skill (read in full): 8 new files in `.claude/skills/mcp-abap-adt/references/` (`abap-coding-rules`, `fm-parameter-typing`, `performance-patterns`, `safe-caching`, `bdc-to-bapi`, `testing-and-diagnosis`, `write-and-transport-details`, `custom-endpoints`) plus a routing table in `SKILL.md`. Dropped as house policy: naming prefixes/module codes, header banner and change markers, transport-description pattern, plan/lessons-learned protocol, system and object names. Not taken: the vendored GPL SQLScript extras
 - [x] Older internal references (message class name, private repo name, old package name, another developer's program) scrubbed from `CLAUDE.md` and `TODO.md`; they still exist in earlier git commits
-- [ ] **Put the agent skill (`.claude/skills/mcp-abap-adt/`) on a size budget** (measured 2026-10-12: `SKILL.md` grew from 918 to 1,729 words in one session; "Recovering from orphaned sessions and locks" alone is 601 words, a third of the file, loaded on every ABAP task although it is a rare-case procedure). Plan:
-  - limits: `SKILL.md` body about 1,000 words; one rule/bullet at most 40 words (the rule plus the action); description at most 400 characters (now 354); each `references/*.md` about 1,500 words, split by topic;
-  - move the recovery procedure to `references/recovery.md` and cut it to about 250 words (symptom, the bare-client check `scripts/adt-session-check.js`, `UnlockObject force=true`, "locks and sessions are separate"); `SKILL.md` keeps one failure-table row that points to it;
-  - trim the 420-word "Rules that prevent most failures" section to bullets of at most 40 words without changing their meaning;
-  - history and evidence (dates, what was tried, disproved theories, system-specific observations) belong in `CLAUDE.md`, `TODO.md` or a plan, not in the skill — the skill states the rule and the action;
-  - add `scripts/check-skill-size.js` and `npm run check:skill`: fail if the `SKILL.md` body, a bullet or the description exceeds its limit (optionally also run it from a test) so the skill cannot grow quietly again;
-  - do the same trim in the original project's skill when its recovery section is updated for `ManageSessions`.
+- [x] **Agent skill on a size budget** — `SKILL.md` body 942 words (limit 1,100; was 1,910), every bullet ≤ 40 words, description 354/400 characters, each reference ≤ 2,200 words. The recovery procedure moved to `references/recovery.md` (about 330 words) and `SKILL.md` keeps a pointer; `npm run check:skill` (`scripts/check-skill-size.js`) fails when a limit is exceeded. Open: the same trim in the original project's skill, and running the check from CI or a test
 
 ## 4. Release hygiene
 

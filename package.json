@@ -5,6 +5,7 @@
   "scripts": {
     "test": "jest",
     "build": "tsc -p tsconfig.json",
+    "check:skill": "node scripts/check-skill-size.js",
     "start": "node ./dist/index.js",
     "dev": "npx @modelcontextprotocol/inspector node ./dist/index.js"
   },
