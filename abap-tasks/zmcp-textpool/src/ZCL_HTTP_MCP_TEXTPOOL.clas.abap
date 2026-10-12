@@ -284,7 +284,7 @@ CLASS zcl_http_mcp_textpool IMPLEMENTATION.
     " a plain custom text) before the visible text - stripped here, per
     " CL_SEDX_ADT_C_HANDLER_SELECTIS~serialize (<fs>-entry+8).
     " Key rendered padded to 8 chars, matching the documented external
-    " convention (CLAUDE.md: "parameter name padded to 8 chars").
+    " convention (docs/TOOL_INTERNALS.md: "parameter name padded to 8 chars").
     LOOP AT it_textpool ASSIGNING FIELD-SYMBOL(<ls>) WHERE id = 'S'.
       rv_text = rv_text &&
         |{ <ls>-key WIDTH = 8 }| && `=` && <ls>-entry+8 && cl_abap_char_utilities=>newline &&
