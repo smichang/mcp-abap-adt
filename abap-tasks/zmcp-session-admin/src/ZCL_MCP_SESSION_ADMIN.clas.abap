@@ -107,6 +107,11 @@ CLASS zcl_mcp_session_admin IMPLEMENTATION.
     DATA(lv_nl) = cl_abap_char_utilities=>newline.
     rv_text = |Sessions of { sy-uname } (client { sy-mandt }): { lines( lt_s ) }. Id for "end" = server:tid. | &&
               |Age = minutes since last activity time of day (day unknown, wraps at 24 h).| && lv_nl.
+    DATA lv_iso TYPE laiso.
+    SELECT SINGLE laiso FROM t002 WHERE spras = @sy-langu INTO @lv_iso.
+    rv_text = rv_text && |Current session: system { sy-sysid }, client { sy-mandt }, user { sy-uname }, | &&
+              |language { sy-langu }{ COND string( WHEN lv_iso IS NOT INITIAL THEN | ({ lv_iso })| ) }, | &&
+              |application server { sy-host }| && lv_nl.
     LOOP AT lt_s INTO DATA(ls_s).
       rv_text = rv_text && |{ ls_s-server }:{ ls_s-tid }  { ls_s-kind }  term={ ls_s-term }  | &&
                 |time={ ls_s-time+0(2) }:{ ls_s-time+2(2) }:{ ls_s-time+4(2) }  age={ ls_s-age_min }min| &&

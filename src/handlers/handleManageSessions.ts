@@ -2,7 +2,7 @@ import { McpError, ErrorCode } from '../lib/utils';
 import { makeAdtRequest, return_error, getBaseUrl } from '../lib/utils';
 import { AxiosError } from 'axios';
 
-// Talks to ZCL_HTTP_MCP_SESSION_ADMIN (default_host/zmcp/session_admin, package ZMCP): lists / ends the
+// Talks to ZCL_HTTP_MCP_SESSION_ADMIN (default_host/zmcp/session_admin, ZMCP): lists / ends the
 // connection user's OWN HTTP (ADT) ABAP sessions on every application server. Stateless, one call
 // each, so not behind the stateful-operation gate. All safety rules (own user only, HTTP only,
 // not the current session, minimum age, fresh re-validation, never tid=-1) are enforced on the

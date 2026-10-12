@@ -307,6 +307,31 @@ async function executeAdtRequest(url: string, method: string, timeout: number, d
             if (cookies) config.headers['Cookie'] = cookies;
             return await createAxiosInstance()(config);
         }
+        // "Session not found" (HTTP 400): the ABAP session behind our cookies is gone (timed out,
+        // ended in SM04, or the intermittent SAP-side fault). The cached cookies and CSRF token are
+        // then dead weight that every later call would resend, so drop them. Retry once only when
+        // the request was not part of a stateful sequence: with a `sap-contextid` on it the lock
+        // lives in the dead session and silently re-running the step on a new one would be wrong.
+        if (isSessionNotFound(error)) {
+            const hadContext = /(^|; )sap-contextid=/.test(String(config.headers['Cookie'] || ''));
+            csrfToken = null;
+            cookies = null;
+            if (hadContext) throw error;
+            delete config.headers['Cookie'];
+            delete config.headers['x-csrf-token'];
+            if (needsCsrf) {
+                try { csrfToken = await fetchCsrfToken(url); } catch (_e) { /* retry without it */ }
+                if (csrfToken) config.headers['x-csrf-token'] = csrfToken;
+            }
+            if (cookies) config.headers['Cookie'] = cookies;
+            return await createAxiosInstance()(config);
+        }
         throw error;
     }
+}
+
+function isSessionNotFound(error: unknown): boolean {
+    if (!(error instanceof AxiosError) || error.response?.status !== 400) return false;
+    const body = typeof error.response.data === 'string' ? error.response.data : JSON.stringify(error.response.data ?? '');
+    return /session not found/i.test(body);
 }

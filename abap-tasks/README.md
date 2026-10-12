@@ -53,7 +53,7 @@ Ask the AI (or do it manually) to create these four classes in package `ZMCP`, i
 3. `ZCL_MCP_DISPATCH`
 4. `ZCL_HTTP_MCP_DISPATCH`
 
-Optionally also `ZCL_MCP_DISPATCH_TEST` (ABAP Unit; `RunUnitTest` proves the dispatcher logic).
+Optionally also `ZCL_MCP_DISPATCH_TEST` (ABAP Unit; `RunUnitTest` proves the dispatcher logic) and, once the dynpro endpoint is installed, `ZCL_MCP_DYNPRO_TEST` (15 read-only tests against standard screens).
 
 With the MCP tools this is, for each class (one at a time — see "serial writes" in the skill):
 
@@ -167,4 +167,4 @@ Copy the shape: a handler class implementing `IF_HTTP_EXTENSION` (CSRF-token han
 
 ## What is *not* included
 
-Test programs for the dynpro endpoint were left out because they depended on screens of a private system. The dispatcher's ABAP Unit class is included.
+Two ABAP Unit classes are included: `ZCL_MCP_DISPATCH_TEST` (8 tests) and `ZCL_MCP_DYNPRO_TEST` (15 tests; read-only, standard screens only, nothing is created or deleted). Install the dynpro one the same way as the dispatcher one, with `source_file=abap-tasks/zmcp-dynpro/src/ZCL_MCP_DYNPRO_TEST.clas.abap`.
