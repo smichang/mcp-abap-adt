@@ -3,9 +3,10 @@
 Load when a write fails with `400 Session not found` right after a successful LOCK, the result
 adds "failed to release the lock", or the object stays locked by the configured SAP user.
 
-**Cause:** an intermittent fault of the SAP system, not of the object, the tools or the tests.
-A bare HTTP client (LOCK → follow-up request → UNLOCK) fails on every object while it lasts and
-works again when it ends. Restarting the MCP server does not cure an active fault.
+**Cause:** not established. It comes and goes: a bare HTTP client (LOCK → follow-up request → UNLOCK)
+fails on every object while it lasts. The maintainer reports it happens around use of `UnlockObject`;
+a controlled test (nine `UnlockObject` calls, on free and on orphan-locked objects) did not trigger
+it, so note the exact call order when it happens. Restarting the MCP server does not cure it.
 
 1. **Stop.** Do not retry, do not rerun the test suite, never `pkill` or interrupt a running write.
 2. **Check:** `node scripts/adt-session-check.js /sap/bc/adt/oo/classes/<your own object>` prints
