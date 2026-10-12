@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `UnlockObject` schema: `object_type` was outside `properties`.
 - Tests no longer rewrite a program found by search pattern; they create their own `$TMP`/`ZMCP_*` fixtures.
 
+- The server announced itself as version 3.4.1; it now reads its version from `package.json`.
+
+### Removed
+- `Dockerfile` and `smithery.yaml` (inherited from upstream, never used here; the old image would also have copied a local `.env` into itself). The server runs with `node dist/index.js`.
+
 ### Changed
 - `abap-tasks/README.md` corrected after a first install on a clean system (message classes `ZMCP_DISPATCH`/`ZMCP_TEXTPOOL` are required for readable errors); project skill extended with the recovery procedure for orphaned sessions and locks.
 

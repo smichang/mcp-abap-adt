@@ -8,6 +8,7 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import path from 'path';
+import { readFileSync } from 'fs';
 import dotenv from 'dotenv';
 
 // Import handler functions
@@ -90,6 +91,15 @@ Fix: set the missing variable(s) directly, run node scripts/setup-secrets.js, or
 /**
  * Server class for interacting with ABAP systems via ADT.
  */
+function serverVersion(): string {
+  // dist/index.js sits next to package.json's directory; fall back rather than fail startup
+  try {
+    return JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version;
+  } catch (_e) {
+    return 'unknown';
+  }
+}
+
 export class mcp_abap_adt_server {
   private server: Server;  // Instance of the MCP server
   private sapConfig: SapConfig; // SAP configuration
@@ -102,7 +112,7 @@ export class mcp_abap_adt_server {
     this.server = new Server(  // Initialize the MCP server
       {
         name: 'mcp-abap-adt', // Server name
-        version: '3.4.1',
+        version: serverVersion(),
       },
       {
         capabilities: {
