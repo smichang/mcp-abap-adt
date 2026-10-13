@@ -22,7 +22,7 @@ resource's own fields.
 | | `DDIC` | CDS / data element / domain detail | `object_type` selects which |
 | | `TRANSACTION` | Tcode → program, package | |
 | | `TRANSPORT` | List a user's transports or inspect one (tasks + objects) | paged, cached |
-| | `MESSAGE_CLASS` | All texts of an SE91 class | |
+| | `MESSAGE_CLASS` | All texts of an SE91 class; optional `language` (ISO) reads a translation, shows the true master language, refuses a language without texts | |
 | | `INACTIVE_OBJECTS` | What your user has written but not activated | no params |
 | `GetDiagnostics` | `DUMP` | Short dumps | list (user/date/category) or `dump_id` |
 | | `TRACE` | SAT / SQL traces | list or `trace_id` |

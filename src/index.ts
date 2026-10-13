@@ -341,7 +341,7 @@ export class mcp_abap_adt_server {
           },
           {
             name: 'GetMeta',
-            description: 'Unified getter for ABAP object/system metadata, selected via the "resource" param. resource=PACKAGE: package details (objects grouped by type); package_name required; full list cached in-memory for paging with offset. resource=TYPEINFO: ABAP type information; type_name required. resource=TRANSACTION: transaction details; transaction_name required. resource=TRANSPORT: list or inspect CTS transport requests; without transport_number lists the given/configured user\'s transports, with transport_number returns full details including tasks and object list. resource=MESSAGE_CLASS: message class texts; message_class required. resource=DDIC: DDIC object definitions (CDS views, data elements, domains); object_type (CDS|DATA_ELEMENT|DOMAIN) + name required. resource=INACTIVE_OBJECTS: lists objects the connection\'s own SAP user currently has inactive (written but not yet activated) — no params.',
+            description: 'Unified getter for ABAP object/system metadata, selected via the "resource" param. resource=PACKAGE: package details (objects grouped by type); package_name required; full list cached in-memory for paging with offset. resource=TYPEINFO: ABAP type information; type_name required. resource=TRANSACTION: transaction details; transaction_name required. resource=TRANSPORT: list or inspect CTS transport requests; without transport_number lists the given/configured user\'s transports, with transport_number returns full details including tasks and object list. resource=MESSAGE_CLASS: message class texts; message_class required; optional language (ISO, e.g. ZF) reads the texts in that language and the true master language is shown. resource=DDIC: DDIC object definitions (CDS views, data elements, domains); object_type (CDS|DATA_ELEMENT|DOMAIN) + name required. resource=INACTIVE_OBJECTS: lists objects the connection\'s own SAP user currently has inactive (written but not yet activated) — no params.',
             inputSchema: {
               type: 'object',
               properties: {
@@ -369,6 +369,10 @@ export class mcp_abap_adt_server {
                 user: {
                   type: 'string',
                   description: 'TRANSPORT only. Optional. SAP username whose transports to list (e.g. DEVUSER). Defaults to the configured SAP_USERNAME.'
+                },
+                language: {
+                  type: 'string',
+                  description: 'MESSAGE_CLASS only (optional). 2-character ISO language (EN, DE, ZF, ...) to read the message texts in. Default: the logon language. Refused if SAP cannot answer in it or holds no texts in it.'
                 },
                 message_class: {
                   type: 'string',
@@ -650,7 +654,7 @@ export class mcp_abap_adt_server {
           },
           {
             name: 'ManageMessageClass',
-            description: 'Create, update or delete an ABAP message class (SE91) and its messages via the native ADT contract. Read messages with GetMeta resource=MESSAGE_CLASS. action=create: description + package_name required, optional initial messages. action=update: messages are inserted or overwritten by number in ONE language (all other messages and languages untouched) — the class\'s master language by default, or `language` (ISO, e.g. EN) to write a translation of messages that exist in the master; delete_messages removes individual messages in all languages; replace_all=true makes messages the complete new list (every other message is deleted); description optionally renames. action=delete: deletes the whole message class. create outside $TMP needs transport_number or transport_description; update/delete without transport_number reuse the request the class is already in; a transport differing from that one is refused. Message long texts cannot be written (ADT exposes no long-text write on this release) — maintain them in SE91; this tool never deletes an existing long text.',
+            description: 'Create, update or delete an ABAP message class (SE91) and its messages via the native ADT contract. Read messages with GetMeta resource=MESSAGE_CLASS (optional `language` reads a translation). action=create: description + package_name required, optional initial messages. action=update: messages are inserted or overwritten by number in ONE language (all other messages and languages untouched) — the class\'s master language by default, or `language` (ISO, e.g. EN) to write a translation of messages that exist in the master; delete_messages removes individual messages in all languages; replace_all=true makes messages the complete new list (every other message is deleted); description optionally renames. action=delete: deletes the whole message class. create outside $TMP needs transport_number or transport_description; update/delete without transport_number reuse the request the class is already in; a transport differing from that one is refused. Message long texts cannot be written (ADT exposes no long-text write on this release) — maintain them in SE91; this tool never deletes an existing long text.',
             inputSchema: {
               type: 'object',
               properties: {

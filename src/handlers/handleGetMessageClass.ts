@@ -17,17 +17,28 @@ export async function handleGetMessageClass(args: any) {
         const messageClass = args.message_class.toUpperCase();
         const baseUrl = await getBaseUrl();
 
+        // Optional language: texts are read in that language via the sap-language header.
+        // Only /messageclass honours it, and unknown ISO codes silently fall back to the
+        // logon language, so the language SAP answered in is checked below.
+        const requestedLang = args.language ? String(args.language).toUpperCase() : '';
+        if (requestedLang && !/^[A-Z0-9]{2}$/.test(requestedLang)) {
+            throw new McpError(ErrorCode.InvalidParams, `language must be a 2-character ISO code such as EN, DE or ZF (got '${args.language}')`);
+        }
+        const readHeaders = requestedLang ? { 'Accept': 'application/vnd.sap.adt.mc.messageclass+xml', 'sap-language': requestedLang } : undefined;
+
         // Try primary endpoint, fall back to alternative
-        const endpoints = [
-            `${baseUrl}/sap/bc/adt/vit/msgclass/${encodeURIComponent(messageClass)}`,
-            `${baseUrl}/sap/bc/adt/messageclass/${encodeURIComponent(messageClass)}`
-        ];
+        const endpoints = requestedLang
+            ? [`${baseUrl}/sap/bc/adt/messageclass/${encodeURIComponent(messageClass)}`]
+            : [
+                `${baseUrl}/sap/bc/adt/vit/msgclass/${encodeURIComponent(messageClass)}`,
+                `${baseUrl}/sap/bc/adt/messageclass/${encodeURIComponent(messageClass)}`
+            ];
 
         let xmlData: string | null = null;
         let lastError: any = null;
         for (const url of endpoints) {
             try {
-                const response = await makeAdtRequest(url, 'GET', 30000);
+                const response = await makeAdtRequest(url, 'GET', 30000, undefined, undefined, readHeaders);
                 xmlData = response.data ?? response;
                 if (typeof xmlData !== 'string') xmlData = String(xmlData);
                 break;
@@ -91,6 +102,28 @@ export async function handleGetMessageClass(args: any) {
             if (pkgName) lines.push(`Package: ${pkgName}`);
             if (responsible) lines.push(`Responsible: ${responsible}`);
             if (language) lines.push(`Language: ${language}`);
+            if (requestedLang && language.toUpperCase() !== requestedLang) {
+                return {
+                    isError: true,
+                    content: [{ type: 'text', text: `Message class '${messageClass}': SAP answered in '${language || '?'}', not ${requestedLang} — is the language installed? Texts not shown.` }]
+                };
+            }
+            const master = await masterLanguageIso(String(baseUrl), messageClass);
+            // SAP echoes the requested language even when it holds no texts in it and serves the
+            // master texts instead, so count the real T100 rows.
+            if (requestedLang && master && requestedLang !== master) {
+                const have = await translatedCount(String(baseUrl), messageClass, requestedLang);
+                if (have === 0) {
+                    return {
+                        isError: true,
+                        content: [{ type: 'text', text: `Message class '${messageClass}' has no texts in ${requestedLang} (master ${master}); SAP would only fall back to the master texts. Not shown.` }]
+                    };
+                }
+                if (have !== null && have < messages.length) {
+                    lines.push(`Note: only ${have} of ${messages.length} messages are translated to ${requestedLang}; the others show the master-language text.`);
+                }
+            }
+            if (master) lines.push(`Master language: ${master}${requestedLang && requestedLang !== master ? ' (showing translation)' : ''}`);
             if (changedAt) {
                 const dateStr = changedAt.replace('T', ' ').replace('Z', ' UTC').substring(0, 20);
                 lines.push(`Last Changed: ${dateStr} by ${changedBy}`);
@@ -118,5 +151,34 @@ export async function handleGetMessageClass(args: any) {
         }
     } catch (error) {
         return return_error(error);
+    }
+}
+
+/** True master language (T100A-MASTERLANG as ISO); ADT's own masterLanguage attribute is unreliable. Non-fatal. */
+async function masterLanguageIso(baseUrl: string, name: string): Promise<string> {
+    if (!/^[A-Z0-9_/]+$/.test(name)) return '';
+    try {
+        const sql = `SELECT s~laiso FROM t100a AS t INNER JOIN t002 AS s ON s~spras = t~masterlang WHERE t~arbgb = '${name}'`;
+        const response = await makeAdtRequest(`${baseUrl}/sap/bc/adt/datapreview/freestyle`, 'POST', 15000, sql, { rowNumber: 1 },
+            { 'Accept': 'application/*', 'Content-Type': 'text/plain' });
+        const xml = String(response.data || '');
+        const m = xml.match(/<dataPreview:data>([^<]*)<\/dataPreview:data>/);
+        return m ? m[1].trim().toUpperCase() : '';
+    } catch (_e) {
+        return '';
+    }
+}
+
+/** Number of T100 rows of the class in an ISO language; null when the lookup fails. */
+async function translatedCount(baseUrl: string, name: string, iso: string): Promise<number | null> {
+    if (!/^[A-Z0-9_/]+$/.test(name) || !/^[A-Z0-9]{2}$/.test(iso)) return null;
+    try {
+        const sql = `SELECT t~msgnr FROM t100 AS t INNER JOIN t002 AS s ON s~spras = t~sprsl WHERE t~arbgb = '${name}' AND s~laiso = '${iso}'`;
+        const response = await makeAdtRequest(`${baseUrl}/sap/bc/adt/datapreview/freestyle`, 'POST', 15000, sql, { rowNumber: 1000 },
+            { 'Accept': 'application/*', 'Content-Type': 'text/plain' });
+        const m = String(response.data || '').match(/<dataPreview:totalRows>\s*(\d+)/);
+        return m ? Number(m[1]) : null;
+    } catch (_e) {
+        return null;
     }
 }
