@@ -6,6 +6,7 @@
 import { handleWriteProgram } from './handlers/handleWriteProgram';
 import { handleDeleteObject } from './handlers/handleDeleteObject';
 import { handleUnlockObject } from './handlers/handleUnlockObject';
+import { handleGetCode } from './handlers/handleGetCode';
 import * as utils from './lib/utils';
 
 const PROG = 'ZMCP_SESS_PROBE';
@@ -76,5 +77,26 @@ describe('opening a stateful session with an expired security session', () => {
         }
         const u = await handleUnlockObject({ object_name: PROG });
         expect(text(u)).not.toMatch(/currently editing/i);
+    });
+});
+
+
+describe('a process that only reads still presents its session cookie (the burst-of-cookie-less-requests trigger)', () => {
+    it('R1. after the first response every request carries SAP_SESSIONID; at most the first one is cookie-less', async () => {
+        if (skipIfCookieless()) return;
+        utils.cleanup();                                   // a fresh process: no jar at all
+        const sent: boolean[] = [];                        // per request: did it carry a session cookie?
+        let issued = false;                                // did the SERVER hand out a session cookie at any point?
+        const ax = utils.createAxiosInstance();
+        const reqId = ax.interceptors.request.use(cfg => { sent.push(String((cfg.headers as any)?.Cookie ?? '').includes('SAP_SESSIONID_')); return cfg; });
+        const resId = ax.interceptors.response.use(r => { if ((r.headers['set-cookie'] ?? []).some((c: string) => c.startsWith('SAP_SESSIONID'))) issued = true; return r; });
+        // a burst of parallel reads, then a few more
+        await Promise.all(Array.from({ length: 8 }, () => handleGetCode({ resource: 'OBJECT', object_name: PROG })));
+        for (let i = 0; i < 4; i++) await handleGetCode({ resource: 'OBJECT', object_name: PROG });
+        ax.interceptors.request.eject(reqId); ax.interceptors.response.eject(resId);
+        const cookieless = sent.filter(x => !x).length;
+        console.log(`  ${sent.length} requests, ${cookieless} without a session cookie, server issued a cookie: ${issued}`);
+        if (!issued) { console.warn('  (server issued no cookie in this run; nothing to present — claim not checkable now)'); return; }
+        expect(cookieless).toBe(1);                        // the first request only — NOT one per read
     });
 });

@@ -1,6 +1,7 @@
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import axios, { AxiosError, AxiosInstance } from 'axios';
 import { describeHttpErrorBody } from './httpError';
+import { mergeCookies, hasSessionCookie, Cooldown } from './cookieJar';
 export { describeHttpErrorBody };
 import { Agent } from 'https';
 import { AxiosResponse } from 'axios';
@@ -125,6 +126,8 @@ export function createAxiosInstance() {
 
 // Cleanup function for tests
 export function cleanup() {
+    warmup = null;
+    sessionCookieCooldown.clear();
     if (axiosInstance) {
         // Clear any interceptors
         const reqInterceptor = axiosInstance.interceptors.request.use((config) => config);
@@ -180,25 +183,6 @@ export async function getAuthHeaders() {
         'sap-client': client,              // SAP client header
         ...(language ? { 'sap-language': language } : {}) // optional logon language
     };
-}
-
-// Cookie attributes that appear in raw Set-Cookie strings and must not be mistaken for cookies.
-const COOKIE_ATTRS = /^(path|secure|httponly|samesite|expires|max-age|domain)$/i;
-
-// Merge Set-Cookie headers into a jar BY NAME (a new value replaces the old one; cookies the response
-// does not mention are kept). Used when a refresh must not throw away a still-valid session cookie.
-function mergeCookies(jar: string | null, setCookie: string[]): string {
-    const map = new Map<string, string>();
-    for (const piece of (jar ?? '').split('; ')) {
-        const name = piece.split('=')[0];
-        if (piece && name && !COOKIE_ATTRS.test(name)) map.set(name, piece);
-    }
-    for (const sc of setCookie) {
-        const pair = sc.split(';')[0];
-        const name = pair.split('=')[0];
-        if (pair && name) map.set(name, pair);
-    }
-    return [...map.values()].join('; ');
 }
 
 // preserve=true: present the current jar (minus any stateful context) on the fetch and MERGE the
@@ -325,10 +309,45 @@ const STATEFUL_PREREFRESH = process.env.SAP_STATEFUL_PREREFRESH !== '0';
 // BEFORE the LOCK (a few cheap stateless GETs, no lock, no session) instead of stranding both.
 // SAP_REQUIRE_SESSION_COOKIE=0 turns the guard off (e.g. a system whose ICM never issues the cookie).
 const REQUIRE_SESSION_COOKIE = process.env.SAP_REQUIRE_SESSION_COOKIE !== '0';
-const SESSION_COOKIE_ATTEMPTS = 4;
+const SESSION_COOKIE_ATTEMPTS = 2;
+// While the server is not issuing the cookie, every request we send extends its throttle (it clears
+// ~100 s after the last excess request) — so after a failed attempt stop sending anything for a while.
+const SESSION_COOKIE_COOLDOWN_MS = 90_000;
+const sessionCookieCooldown = new Cooldown();
+
+// Keep the jar fresh from EVERY response (not only the CSRF fetch): a read-only process used to have no
+// jar at all, so every single read went out cookie-less and created a new server security session.
+// sap-contextid is left to the stateful handlers, which add/remove it explicitly.
+function absorbCookies(response: any) {
+    const sc = response?.headers?.['set-cookie'];
+    if (sc && sc.length) cookies = mergeCookies(cookies, sc, ['sap-contextid']);
+}
+
+// The very first request of a process has no cookies to present. Let it finish (and fill the jar)
+// before any parallel sibling goes out, so a burst at startup is ONE cookie-less request, not N.
+let warmup: Promise<void> | null = null;
 
 async function executeAdtRequest(url: string, method: string, timeout: number, data?: any, params?: any, headers?: Record<string, string>) {
+    let releaseWarmup: (() => void) | undefined;
+    if (!cookies) {
+        if (warmup) await warmup;
+        if (!cookies && !warmup) warmup = new Promise<void>(r => { releaseWarmup = () => { warmup = null; r(); }; });
+    }
+    try {
+        return await executeAdtRequestCore(url, method, timeout, data, params, headers);
+    } finally {
+        releaseWarmup?.();
+    }
+}
+
+async function executeAdtRequestCore(url: string, method: string, timeout: number, data?: any, params?: any, headers?: Record<string, string>) {
     if (STATEFUL_PREREFRESH && method !== 'GET' && headers?.['X-sap-adt-sessiontype'] === 'stateful' && !(cookies ?? '').includes('sap-contextid=')) {
+        if (REQUIRE_SESSION_COOKIE && sessionCookieCooldown.remainingMs() > 0) {
+            throw new Error(
+                `SAP is still not issuing a security-session cookie; no request was sent and nothing was locked. ` +
+                `The server clears this about 100 s after the last burst of requests without a session cookie — ` +
+                `retry in ${Math.ceil(sessionCookieCooldown.remainingMs() / 1000)} s.`);
+        }
         let haveSessionCookie = false;
         for (let attempt = 1; attempt <= SESSION_COOKIE_ATTEMPTS; attempt++) {
             try {
@@ -336,17 +355,19 @@ async function executeAdtRequest(url: string, method: string, timeout: number, d
             } catch (_e) {
                 break; // not fatal — the normal path below fetches/retries as before
             }
-            haveSessionCookie = (cookies ?? '').includes('SAP_SESSIONID_');
+            haveSessionCookie = hasSessionCookie(cookies);
             if (haveSessionCookie || !REQUIRE_SESSION_COOKIE) break;
-            await new Promise(r => setTimeout(r, 300 * attempt));
+            await new Promise(r => setTimeout(r, 1000));
         }
+        if (haveSessionCookie) sessionCookieCooldown.clear();
         if (REQUIRE_SESSION_COOKIE && cookies && !haveSessionCookie) {
+            sessionCookieCooldown.trip(SESSION_COOKIE_COOLDOWN_MS);
             throw new Error(
                 `SAP did not issue a security-session cookie (SAP_SESSIONID_*) on ${SESSION_COOKIE_ATTEMPTS} attempts, so a stateful ADT session ` +
                 `cannot be continued: the LOCK would succeed and the next request would fail with "400 Session not found", ` +
-                `stranding an SM12 lock and an SM04 session. Nothing was locked. The server does this for windows of about 30 minutes ` +
-                `(2026-10-14 10:01-10:31, while another client of this user held the security session); a process that already ` +
-                `holds the cookie is not affected. Retry later, or reload /mcp once the window is over. ` +
+                `stranding an SM12 lock and an SM04 session. Nothing was locked. The server stops issuing the cookie for about 100 s ` +
+                `after a burst of requests that carry no session cookie (from any client of this user on this machine: test runs, ` +
+                `probes, other sessions); a process that already holds the cookie is not affected. Retry in ~2 minutes. ` +
                 `Set SAP_REQUIRE_SESSION_COOKIE=0 to disable this guard.`);
         }
     }
@@ -397,8 +418,10 @@ async function executeAdtRequest(url: string, method: string, timeout: number, d
 
     try {
         const response = await createAxiosInstance()(config);
+        absorbCookies(response);
         return response;
     } catch (error) {
+        if (error instanceof AxiosError) absorbCookies(error.response);
         // If we get a 403 with "CSRF token validation failed", try to fetch a new token and retry.
         // fetchCsrfToken() also refreshes the module-level `cookies` (from the token GET's
         // Set-Cookie) — the retry must resend that same refreshed cookie, or SAP rejects the new
@@ -408,7 +431,9 @@ async function executeAdtRequest(url: string, method: string, timeout: number, d
             csrfToken = await fetchCsrfToken(url, true); // keep a still-valid session cookie; an expired one is replaced by the server
             config.headers['x-csrf-token'] = csrfToken;
             if (cookies) config.headers['Cookie'] = cookies;
-            return await createAxiosInstance()(config);
+            const retried = await createAxiosInstance()(config);
+            absorbCookies(retried);
+            return retried;
         }
         // "Session not found" (HTTP 400): the ABAP session behind our cookies is gone (timed out,
         // ended in SM04, or the intermittent SAP-side fault). The cached cookies and CSRF token are
