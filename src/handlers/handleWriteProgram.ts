@@ -7,6 +7,7 @@ import { AxiosError } from 'axios';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { runSyntaxCheck, formatSyntaxMessages } from '../lib/syntaxCheck';
+import { validateEdits, applyEdits, PatchEdit } from '../lib/sourcePatch';
 
 interface ObjectInfo {
     uri: string;      // e.g. /sap/bc/adt/programs/includes/ZRPP0057NF03
@@ -96,6 +97,7 @@ async function writeProgramCore(args: any) {
         const transportDescription = args?.transport_description ? String(args.transport_description) : '';
         const activate = args?.activate !== false; // default true
         const checkOnly = args?.check_only === true;
+        const patchMode = args?.edits !== undefined;
         const syntaxCheck = checkOnly || args?.syntax_check === true;
         const description = args?.description ? String(args.description) : '';
         const packageName = args?.package_name ? String(args.package_name).toUpperCase() : '';
@@ -112,6 +114,10 @@ async function writeProgramCore(args: any) {
             if (!packageName) {
                 throw new McpError(ErrorCode.InvalidParams, 'package_name is required together with transport_description (used as the new transport\'s DEVCLASS)');
             }
+        }
+
+        if (patchMode && objectType === 'FUGR') {
+            throw new McpError(ErrorCode.InvalidParams, 'edits cannot be used with object_type=FUGR (a function group has no writable source).');
         }
 
         // ── FUGR is a container, not a source object ──────────────────
@@ -159,8 +165,19 @@ async function writeProgramCore(args: any) {
         }
 
         // Exactly one of source_code or source_file is required. source_file wins on collision.
-        let sourceCode: string;
-        if (sourceFile) {
+        // Patch mode (edits[]) replaces both: the source is read from SAP and patched further below.
+        let sourceCode: string = '';
+        let patchEdits: PatchEdit[] = [];
+        if (patchMode) {
+            if (sourceFile || (typeof sourceCodeArg === 'string' && sourceCodeArg.trim().length > 0)) {
+                throw new McpError(ErrorCode.InvalidParams, 'edits cannot be combined with source_code or source_file — use edits to patch the current SAP source, or source_code for a full rewrite.');
+            }
+            try {
+                patchEdits = validateEdits(args.edits);
+            } catch (e: any) {
+                throw new McpError(ErrorCode.InvalidParams, e?.message || String(e));
+            }
+        } else if (sourceFile) {
             const resolved = path.resolve(sourceFile);
             try {
                 sourceCode = await fs.readFile(resolved, 'utf8');
@@ -176,8 +193,8 @@ async function writeProgramCore(args: any) {
             }
             sourceCode = sourceCodeArg;
         }
-        validateSourceLineLengths(sourceCode);
-        const sourceDiagnostics = describeSource(sourceCode, !!sourceFile);
+        if (!patchMode) validateSourceLineLengths(sourceCode);
+        let sourceDiagnostics = patchMode ? '' : describeSource(sourceCode, !!sourceFile);
 
         // Optional text-pool categories — read each from its file param if given, otherwise inline.
         const loadTextCategory = async (
@@ -209,6 +226,31 @@ async function writeProgramCore(args: any) {
         // Auto-detect object type (program, include, or function module) via search
         let objInfo = await resolveObjectInfo(String(baseUrl), programName);
 
+        // ── Patch mode: read the current source from SAP and apply edits[] to it ──
+        // Fails fast, before any lock, when an anchor is missing or ambiguous. The source is read
+        // again after the LOCK (below) and the edits re-applied if it changed in between, so a
+        // concurrent change is never overwritten.
+        let patchBaseSource = '';
+        let patchSummary = '';
+        if (patchMode) {
+            if (!objInfo) {
+                return { isError: true, content: [{ type: 'text', text: `edits needs an existing object, but '${programName}' was not found. Use source_code (+ description, package_name) to create it.` }] };
+            }
+            try {
+                patchBaseSource = await readCurrentSource(`${baseUrl}${objInfo.uri}/source/main`);
+            } catch (e: any) {
+                return return_error(e);
+            }
+            const patched = applyEdits(patchBaseSource, patchEdits);
+            if (!patched.ok) {
+                return { isError: true, content: [{ type: 'text', text: `${patched.error}\nNothing was locked or written.` }] };
+            }
+            sourceCode = patched.text;
+            validateSourceLineLengths(sourceCode);
+            sourceDiagnostics = describeSource(sourceCode, false);
+            patchSummary = describePatch(patchEdits, patched.applied);
+        }
+
         // Optional pre-write syntax check (stateless, no lock): refuse a bad edit before it costs a
         // lock → PUT → unlock → activate cycle. Only possible for an object that already exists;
         // a brand-new one is created below and then written normally. A failing check *call*
@@ -224,19 +266,15 @@ async function writeProgramCore(args: any) {
                     const check = await runSyntaxCheck(String(baseUrl), objInfo.uri, sourceCode);
                     const report = formatSyntaxMessages(check);
                     if (check.errors > 0) {
-                        return { isError: true, content: [{ type: 'text', text: `${report}
-Nothing was locked or written.` }] };
+                        return { isError: true, content: [{ type: 'text', text: `${report}\nNothing was locked or written.` }] };
                     }
                     if (checkOnly) {
-                        return { isError: false, content: [{ type: 'text', text: `${report}
-Check only — nothing was locked or written.` }] };
+                        return { isError: false, content: [{ type: 'text', text: `${patchSummary ? patchSummary + '\n' : ''}${report}\nCheck only — nothing was locked or written.` }] };
                     }
-                    syntaxNote = `
-${report}`;
+                    syntaxNote = `\n${report}`;
                 } catch (e: any) {
                     if (checkOnly) return return_error(e);
-                    syntaxNote = `
-Syntax check could not run (${e?.message || String(e)}) — continued with the write.`;
+                    syntaxNote = `\nSyntax check could not run (${e?.message || String(e)}) — continued with the write.`;
                 }
             }
         }
@@ -409,6 +447,31 @@ Syntax check could not run (${e?.message || String(e)}) — continued with the w
                 }
                 effectiveTransportNumber = tRes.transportNumber!;
                 autoCreatedTaskNumber = tRes.taskNumber || '';
+            }
+        }
+
+        // ── Patch mode: re-read inside the lock; re-apply if SAP's source moved since the first read ──
+        if (patchMode) {
+            let failure = '';
+            try {
+                const lockedSource = await readCurrentSource(sourceUrl);
+                if (lockedSource !== patchBaseSource) {
+                    const again = applyEdits(lockedSource, patchEdits);
+                    if (again.ok) {
+                        sourceCode = again.text;
+                        sourceDiagnostics = describeSource(sourceCode, false);
+                        patchSummary = describePatch(patchEdits, again.applied) + ' (SAP source had changed since it was first read — edits re-applied to the newer text)';
+                    } else {
+                        failure = `The source of '${programName}' changed in SAP after it was first read, and the edits no longer apply: ${again.error}`;
+                    }
+                }
+            } catch (e: any) {
+                failure = `Could not re-read the source after locking: ${e?.message || String(e)}`;
+            }
+            if (failure) {
+                const unlockError = await attemptUnlock(objectUrl, lockHandle);
+                const extra = unlockError ? `\nAdditionally, failed to release the lock.\nReason: ${unlockError}\nLock handle: ${lockHandle}. Retry with UnlockObject('${programName}').` : '';
+                return { isError: true, content: [{ type: 'text', text: `${failure}\nNothing was written.${extra}` }] };
             }
         }
 
@@ -667,6 +730,7 @@ Syntax check could not run (${e?.message || String(e)}) — continued with the w
         if (autoCreatedTaskNumber) lines.push(`Task: ${autoCreatedTaskNumber}`);
         if (reusedExistingTransportNote) lines.push(reusedExistingTransportNote);
         lines.push(sourceDiagnostics);
+        if (patchSummary) lines.push(patchSummary);
         if (syntaxNote) lines.push(syntaxNote.trim());
         if (hasAnyTextElements) {
             const written: string[] = [];
@@ -679,7 +743,14 @@ Syntax check could not run (${e?.message || String(e)}) — continued with the w
                 lines.push(`Text elements written: ${written.join(', ')}`);
             }
         }
-        if (activationResult) lines.push(activationResult);
+        if (activationResult) {
+            lines.push(activationResult);
+            if (patchMode && activationResult.includes('FAILED')) {
+                lines.push(`The patched source IS saved, but '${programName}' is INACTIVE. Repair it with another edits[] call (patches apply to the inactive working version), or rewrite with source_code. SAP's activation messages can report "Line 1" instead of the real line — use syntax_check=true (or check_only=true) to get the exact line:col before saving.`);
+            }
+        } else if (!activate) {
+            lines.push(`Not activated (activate=false) — the saved source stays inactive until a later write without activate=false, or ActivateObjects.`);
+        }
 
         const hasError = activationResult.includes('FAILED') || !!textSymbolsError;
         return {
@@ -689,6 +760,33 @@ Syntax check could not run (${e?.message || String(e)}) — continued with the w
     } catch (error) {
         return return_error(error);
     }
+}
+
+async function readCurrentSource(sourceUrl: string): Promise<string> {
+    const r = await makeAdtRequest(sourceUrl, 'GET', 30000, undefined, undefined, { 'Accept': 'text/plain' });
+    return typeof r.data === 'string' ? r.data : String(r.data ?? '');
+}
+
+// Line counts come from the edits themselves (O(edit size)) rather than a diff of the whole
+// source, which is O(lines²) and would eat the time patch mode exists to save.
+function describePatch(edits: PatchEdit[], applied: { replacements: number; line: number }[]): string {
+    const lineCount = (t: string) => t.length === 0 ? 0 : t.split('\n').length - (t.endsWith('\n') ? 1 : 0);
+    let added = 0, removed = 0;
+    applied.forEach((a, i) => {
+        // anchor context (identical leading/trailing lines of old and new) is not a change
+        const o = edits[i].old_string.replace(/\r\n/g, '\n').split('\n');
+        const n = edits[i].new_string.replace(/\r\n/g, '\n').split('\n');
+        let head = 0;
+        while (head < o.length && head < n.length && o[head] === n[head]) head++;
+        let tail = 0;
+        while (tail < o.length - head && tail < n.length - head && o[o.length - 1 - tail] === n[n.length - 1 - tail]) tail++;
+        const oldChanged = o.slice(head, o.length - tail).join('\n');
+        const newChanged = n.slice(head, n.length - tail).join('\n');
+        added += a.replacements * lineCount(newChanged);
+        removed += a.replacements * lineCount(oldChanged);
+    });
+    const where = applied.map(a => `${a.replacements > 1 ? `${a.replacements}x from ` : ''}line ${a.line}`).join(', ');
+    return `Patched with ${applied.length} edit(s): +${added} −${removed} lines (${where}).`;
 }
 
 function describeSource(sourceCode: string, fromSourceFile: boolean): string {

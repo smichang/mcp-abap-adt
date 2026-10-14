@@ -570,7 +570,7 @@ export class mcp_abap_adt_server {
                 },
                 source_code: {
                   type: 'string',
-                  description: 'The complete ABAP source code to write. This will REPLACE the entire source. Use this OR source_file (not both). Provide source_file instead when the code is large enough that inlining it would burn context.'
+                  description: 'The complete ABAP source code to write. This will REPLACE the entire source. Use this OR source_file OR edits (not combined). Provide source_file instead when the code is large enough that inlining it would burn context.'
                 },
                 source_file: {
                   type: 'string',
@@ -618,6 +618,20 @@ export class mcp_abap_adt_server {
                   type: 'boolean',
                   description: 'Whether to activate after writing. Default: true',
                   default: true
+                },
+                edits: {
+                  type: 'array',
+                  description: 'PATCH MODE — change part of an existing object without sending its whole source (use instead of source_code/source_file; cannot be combined with them; the object must already exist). Each entry is { old_string, new_string, replace_all? }: old_string must match the CURRENT SAP source exactly (case, indentation, spaces) and occur exactly once unless replace_all=true; new_string replaces it ("" deletes). Edits apply in order, each to the result of the previous one; if ANY edit fails, nothing is locked or written and the error names the edit, and — when the text exists with other whitespace/case — shows the exact lines to copy. The source is read from SAP (the inactive working version if one exists), re-read after the lock, and edits are re-applied if it changed in between. Syntax check, transport guard, text elements and activation behave as for a full write; check_only=true + edits is a dry run. Max 20 edits. Prefer this over source_code for any change to a large object.',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      old_string: { type: 'string', description: 'Exact text to find in the current source (multi-line allowed). Include enough surrounding lines to be unique.' },
+                      new_string: { type: 'string', description: 'Replacement text. Empty string deletes old_string.' },
+                      replace_all: { type: 'boolean', description: 'Replace every occurrence instead of requiring exactly one. Default false.' }
+                    },
+                    required: ['old_string', 'new_string']
+                  },
+                  maxItems: 20
                 },
                 syntax_check: {
                   type: 'boolean',

@@ -3,6 +3,19 @@
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`WriteProgram` patch mode — `edits[]` (`old_string` → `new_string`, `replace_all?`).** Change part of an existing object without sending its whole source (59 bytes instead of 48,856 for a one-line change to a 1,500-line program). Exact match, exactly-once unless `replace_all`, ordered, atomic (any failing edit → nothing locked or written); a miss explains itself. The source is read from SAP (the inactive working version if there is one), re-read after the lock and the edits re-applied if it changed meanwhile. Works with `check_only` (dry run), `syntax_check`, `activate=false`, transports and text elements; max 20 edits; existing objects only; not for `FUGR`. Engine `src/lib/sourcePatch.ts`.
+
+### Fixed
+- **`400 Session not found` after a successful LOCK — stateful flows now refuse instead of stranding a lock.** When the CSRF fetch is answered without the security-session cookie (`SAP_SESSIONID_*`, only `sap-XSRF_*`), LOCK returns 200 but the next request on that context gets `400 Session not found`. `makeAdtRequest` now refreshes token + cookies before OPENING a stateful session, retries up to 4× for the cookie, and throws a clear error before the LOCK if it never arrives (`SAP_REQUIRE_SESSION_COOKIE=0` disables). Why the server sometimes omits the cookie is not established — see `docs/TOOL_INTERNALS.md`.
+- **A refused (403) stateful LOCK left an orphan stateful context.** The same pre-refresh makes the session-opening request valid the first time (`SAP_STATEFUL_PREREFRESH=0` restores the old behaviour).
+- **ICM HTML error pages no longer flood the tool result** (`describeHttpErrorBody`, `src/lib/httpError.ts`).
+- **`activate=false` writes now say the saved source stays inactive.**
+- **`WriteProgram` left an empty change request behind when creating a NEW object (or `FUGR`) failed after its `transport_description` request was made.** The auto-created transport is deleted again and the error says so.
+- **A finished jest run could not exit after the keep-alive change.** `cleanup()` now destroys the kept-alive HTTPS agent.
+
 ## [3.6.0] - 2026-10-14
 
 ### Added

@@ -1,5 +1,7 @@
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import axios, { AxiosError, AxiosInstance } from 'axios';
+import { describeHttpErrorBody } from './httpError';
+export { describeHttpErrorBody };
 import { Agent } from 'https';
 import { AxiosResponse } from 'axios';
 import { getConfig, SapConfig } from '../index'; // getConfig needs to be exported from index.ts
@@ -96,7 +98,7 @@ export function return_error(error: any) {
         isError: true,
         content: [{
             type: 'text',
-            text: `Error: ${error instanceof AxiosError ? String(error.response?.data ?? error.message)
+            text: `Error: ${error instanceof AxiosError ? describeHttpErrorBody(error.response?.data ?? error.message)
                 : error instanceof Error ? error.message
                     : String(error)}`
         }]
@@ -104,16 +106,19 @@ export function return_error(error: any) {
 }
 
 let axiosInstance: AxiosInstance | null = null;
+let httpsAgent: Agent | null = null;
 export function createAxiosInstance() {
     if (!axiosInstance) {
-        axiosInstance = axios.create({
-            httpsAgent: new Agent({
-                rejectUnauthorized: false, // Allow self-signed certificates
-                // Reuse TLS connections across ADT calls (lock → PUT → unlock → activate etc.)
-                keepAlive: true,
-                maxSockets: Number(process.env.SAP_MAX_CONCURRENT_REQUESTS) || 6
-            })
+        httpsAgent = new Agent({
+            rejectUnauthorized: false, // Allow self-signed certificates
+            // Reuse TLS connections across ADT calls (lock → PUT → unlock → activate etc.)
+            keepAlive: true,
+            maxSockets: Number(process.env.SAP_MAX_CONCURRENT_REQUESTS) || 6,
+            // An idle kept-alive socket is closed after 15 s, so a short-lived process (tests,
+            // scripts) is not held open by sockets nobody will reuse.
+            timeout: 15000
         });
+        axiosInstance = axios.create({ httpsAgent });
     }
     return axiosInstance;
 }
@@ -128,6 +133,9 @@ export function cleanup() {
         axiosInstance.interceptors.response.eject(resInterceptor);
     }
     axiosInstance = null;
+    // Close the kept-alive sockets, otherwise the process (e.g. a jest run) cannot exit.
+    httpsAgent?.destroy();
+    httpsAgent = null;
     config = undefined;
     csrfToken = null;
     cookies = null;
@@ -174,14 +182,39 @@ export async function getAuthHeaders() {
     };
 }
 
-async function fetchCsrfToken(url: string): Promise<string> {
+// Cookie attributes that appear in raw Set-Cookie strings and must not be mistaken for cookies.
+const COOKIE_ATTRS = /^(path|secure|httponly|samesite|expires|max-age|domain)$/i;
+
+// Merge Set-Cookie headers into a jar BY NAME (a new value replaces the old one; cookies the response
+// does not mention are kept). Used when a refresh must not throw away a still-valid session cookie.
+function mergeCookies(jar: string | null, setCookie: string[]): string {
+    const map = new Map<string, string>();
+    for (const piece of (jar ?? '').split('; ')) {
+        const name = piece.split('=')[0];
+        if (piece && name && !COOKIE_ATTRS.test(name)) map.set(name, piece);
+    }
+    for (const sc of setCookie) {
+        const pair = sc.split(';')[0];
+        const name = pair.split('=')[0];
+        if (pair && name) map.set(name, pair);
+    }
+    return [...map.values()].join('; ');
+}
+
+// preserve=true: present the current jar (minus any stateful context) on the fetch and MERGE the
+// answer into it — the server then keeps a valid security session, or replaces an expired one.
+async function fetchCsrfToken(url: string, preserve = false): Promise<string> {
     try {
+        const sendCookie = preserve && cookies
+            ? cookies.split('; ').filter(c => !c.startsWith('sap-contextid')).join('; ')
+            : '';
         const response = await createAxiosInstance()({
             method: 'GET',
             url,
             headers: {
                 ...(await getAuthHeaders()),
-                'x-csrf-token': 'fetch'
+                'x-csrf-token': 'fetch',
+                ...(sendCookie ? { Cookie: sendCookie } : {})
             }
         });
 
@@ -192,7 +225,7 @@ async function fetchCsrfToken(url: string): Promise<string> {
 
         // Extract and store cookies
         if (response.headers['set-cookie']) {
-            cookies = response.headers['set-cookie'].join('; ');
+            cookies = preserve ? mergeCookies(cookies, response.headers['set-cookie']) : response.headers['set-cookie'].join('; ');
         }
 
         return token;
@@ -275,7 +308,49 @@ export async function makeAdtRequest(url: string, method: string, timeout: numbe
     }
 }
 
+// Opening a stateful ADT session (a LOCK carrying X-sap-adt-sessiontype: stateful and no
+// sap-contextid yet) with a stale security-session cookie / CSRF token gets a 403 — but that refused
+// request has ALREADY created a stateful context on the server (it answers Set-Cookie: sap-contextid),
+// which nothing ever uses or closes: an orphan SM04 session per refusal (reproduced 2026-10-14). The
+// 403 retry below then works, so the damage was invisible. Refresh token + cookie with one cheap
+// stateless GET first, so the session-opening request is valid the first time.
+// SAP_STATEFUL_PREREFRESH=0 turns this off.
+const STATEFUL_PREREFRESH = process.env.SAP_STATEFUL_PREREFRESH !== '0';
+
+// A stateful ADT session can only be continued if the cookie jar carries the server's security-session
+// cookie (SAP_SESSIONID_*). Measured 2026-10-14: when the CSRF fetch is answered WITHOUT it (only
+// sap-XSRF_*, which the server does at times and which nothing we send changes), LOCK succeeds (200) but
+// the very next request carrying its sap-contextid gets "400 Session not found" — every time (25 of 25),
+// leaving the SM12 lock and an SM04 session behind. So in that state a stateful flow is doomed; refuse it
+// BEFORE the LOCK (a few cheap stateless GETs, no lock, no session) instead of stranding both.
+// SAP_REQUIRE_SESSION_COOKIE=0 turns the guard off (e.g. a system whose ICM never issues the cookie).
+const REQUIRE_SESSION_COOKIE = process.env.SAP_REQUIRE_SESSION_COOKIE !== '0';
+const SESSION_COOKIE_ATTEMPTS = 4;
+
 async function executeAdtRequest(url: string, method: string, timeout: number, data?: any, params?: any, headers?: Record<string, string>) {
+    if (STATEFUL_PREREFRESH && method !== 'GET' && headers?.['X-sap-adt-sessiontype'] === 'stateful' && !(cookies ?? '').includes('sap-contextid=')) {
+        let haveSessionCookie = false;
+        for (let attempt = 1; attempt <= SESSION_COOKIE_ATTEMPTS; attempt++) {
+            try {
+                csrfToken = await fetchCsrfToken(url, true);
+            } catch (_e) {
+                break; // not fatal — the normal path below fetches/retries as before
+            }
+            haveSessionCookie = (cookies ?? '').includes('SAP_SESSIONID_');
+            if (haveSessionCookie || !REQUIRE_SESSION_COOKIE) break;
+            await new Promise(r => setTimeout(r, 300 * attempt));
+        }
+        if (REQUIRE_SESSION_COOKIE && cookies && !haveSessionCookie) {
+            throw new Error(
+                `SAP did not issue a security-session cookie (SAP_SESSIONID_*) on ${SESSION_COOKIE_ATTEMPTS} attempts, so a stateful ADT session ` +
+                `cannot be continued: the LOCK would succeed and the next request would fail with "400 Session not found", ` +
+                `stranding an SM12 lock and an SM04 session. Nothing was locked. The server does this for windows of about 30 minutes ` +
+                `(2026-10-14 10:01-10:31, while another client of this user held the security session); a process that already ` +
+                `holds the cookie is not affected. Retry later, or reload /mcp once the window is over. ` +
+                `Set SAP_REQUIRE_SESSION_COOKIE=0 to disable this guard.`);
+        }
+    }
+
     // Any mutating verb needs a CSRF token — not just POST/PUT. DELETE (transport/object
     // deletion) needs it too; SAP rejects it the same way with "CSRF token validation failed"
     // if the header is missing, which previously went unhandled here.
@@ -330,7 +405,7 @@ async function executeAdtRequest(url: string, method: string, timeout: number, d
         // token as belonging to a different session than the one on the request.
         if (error instanceof AxiosError && error.response?.status === 403 &&
             error.response.data?.includes('CSRF')) {
-            csrfToken = await fetchCsrfToken(url);
+            csrfToken = await fetchCsrfToken(url, true); // keep a still-valid session cookie; an expired one is replaced by the server
             config.headers['x-csrf-token'] = csrfToken;
             if (cookies) config.headers['Cookie'] = cookies;
             return await createAxiosInstance()(config);
