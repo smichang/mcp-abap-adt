@@ -6,6 +6,7 @@ import { getConfig } from '../index';
 import { AxiosError } from 'axios';
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import { runSyntaxCheck, formatSyntaxMessages } from '../lib/syntaxCheck';
 
 interface ObjectInfo {
     uri: string;      // e.g. /sap/bc/adt/programs/includes/ZRPP0057NF03
@@ -94,6 +95,8 @@ async function writeProgramCore(args: any) {
         const transportNumber = args?.transport_number ? String(args.transport_number).toUpperCase() : '';
         const transportDescription = args?.transport_description ? String(args.transport_description) : '';
         const activate = args?.activate !== false; // default true
+        const checkOnly = args?.check_only === true;
+        const syntaxCheck = checkOnly || args?.syntax_check === true;
         const description = args?.description ? String(args.description) : '';
         const packageName = args?.package_name ? String(args.package_name).toUpperCase() : '';
         const objectType = args?.object_type ? String(args.object_type).toUpperCase() : 'PROG';
@@ -134,16 +137,19 @@ async function writeProgramCore(args: any) {
             }
             let fugrTransportNumber = transportNumber;
             let fugrTaskNumber = '';
+            let fugrAutoCreated = false;
             if (!fugrTransportNumber && transportDescription) {
                 const deferredRef = `/sap/bc/adt/${CREATION_TYPES['FUGR'].creationPath}/${encodeURIComponent(programName)}`;
                 const tRes = await createTransportForObject(String(baseUrl), deferredRef, transportDescription, packageName);
                 if (tRes.error) return { isError: true, content: [{ type: 'text', text: tRes.error }] };
                 fugrTransportNumber = tRes.transportNumber!;
                 fugrTaskNumber = tRes.taskNumber || '';
+                fugrAutoCreated = true;
             }
             const createResult = await createObject(String(baseUrl), programName, 'FUGR', description, packageName, fugrTransportNumber);
             if (createResult.error) {
-                return { isError: true, content: [{ type: 'text', text: createResult.error }] };
+                const cleanup = fugrAutoCreated ? await discardAutoCreatedTransport(String(baseUrl), fugrTransportNumber) : '';
+                return { isError: true, content: [{ type: 'text', text: createResult.error + cleanup }] };
             }
             const lines = [`Created function group '${programName}' in package '${packageName}'.`];
             if (fugrTransportNumber) lines.push(`Transport: ${fugrTransportNumber}${transportDescription ? ' (auto-created)' : ''}`);
@@ -203,6 +209,38 @@ async function writeProgramCore(args: any) {
         // Auto-detect object type (program, include, or function module) via search
         let objInfo = await resolveObjectInfo(String(baseUrl), programName);
 
+        // Optional pre-write syntax check (stateless, no lock): refuse a bad edit before it costs a
+        // lock → PUT → unlock → activate cycle. Only possible for an object that already exists;
+        // a brand-new one is created below and then written normally. A failing check *call*
+        // never blocks a normal write — only a reported error does.
+        let syntaxNote = '';
+        if (syntaxCheck) {
+            if (!objInfo) {
+                if (checkOnly) {
+                    return { isError: true, content: [{ type: 'text', text: `check_only needs an existing object, but '${programName}' was not found.` }] };
+                }
+            } else {
+                try {
+                    const check = await runSyntaxCheck(String(baseUrl), objInfo.uri, sourceCode);
+                    const report = formatSyntaxMessages(check);
+                    if (check.errors > 0) {
+                        return { isError: true, content: [{ type: 'text', text: `${report}
+Nothing was locked or written.` }] };
+                    }
+                    if (checkOnly) {
+                        return { isError: false, content: [{ type: 'text', text: `${report}
+Check only — nothing was locked or written.` }] };
+                    }
+                    syntaxNote = `
+${report}`;
+                } catch (e: any) {
+                    if (checkOnly) return return_error(e);
+                    syntaxNote = `
+Syntax check could not run (${e?.message || String(e)}) — continued with the write.`;
+                }
+            }
+        }
+
         // If object doesn't exist, try to create it
         if (!objInfo) {
             if (!description || !packageName) {
@@ -216,6 +254,7 @@ async function writeProgramCore(args: any) {
                 validateNameLength(functionGroup, 'FUGR', 'function group name');
             }
 
+            let preCreatedTransport = false; // transport made by this call, before the object exists
             // Create the transport BEFORE the object itself, using a deferred (not-yet-existing)
             // object reference, so the create call below can pass corrNr and never trigger SAP's
             // own auto-generated "Generated Request for Change Recording" transport.
@@ -227,6 +266,7 @@ async function writeProgramCore(args: any) {
                 if (tRes.error) return { isError: true, content: [{ type: 'text', text: tRes.error }] };
                 effectiveTransportNumber = tRes.transportNumber!;
                 autoCreatedTaskNumber = tRes.taskNumber || '';
+                preCreatedTransport = true;
             }
 
             if (objectType === 'FUNC') {
@@ -242,7 +282,8 @@ async function writeProgramCore(args: any) {
                 }
                 const fgResult = await ensureFunctionGroup(String(baseUrl), functionGroup, description, packageName, effectiveTransportNumber);
                 if (fgResult.error) {
-                    return { isError: true, content: [{ type: 'text', text: fgResult.error }] };
+                    const cleanup = preCreatedTransport ? await discardAutoCreatedTransport(String(baseUrl), effectiveTransportNumber) : '';
+                    return { isError: true, content: [{ type: 'text', text: fgResult.error + cleanup }] };
                 }
                 const fmResult = await createFunctionModule(String(baseUrl), programName, functionGroup, description, effectiveTransportNumber);
                 if (fmResult.error) {
@@ -251,7 +292,8 @@ async function writeProgramCore(args: any) {
             } else {
                 const createResult = await createObject(String(baseUrl), programName, objectType, description, packageName, effectiveTransportNumber);
                 if (createResult.error) {
-                    return { isError: true, content: [{ type: 'text', text: createResult.error }] };
+                    const cleanup = preCreatedTransport ? await discardAutoCreatedTransport(String(baseUrl), effectiveTransportNumber) : '';
+                    return { isError: true, content: [{ type: 'text', text: createResult.error + cleanup }] };
                 }
             }
 
@@ -276,13 +318,11 @@ async function writeProgramCore(args: any) {
                 };
             }
             created = true;
-        } else if (!effectiveTransportNumber && transportDescription) {
-            // Existing object, no transport given but caller wants a properly described one.
-            const tRes = await createTransportForObject(String(baseUrl), objInfo.uri, transportDescription, packageName);
-            if (tRes.error) return { isError: true, content: [{ type: 'text', text: tRes.error }] };
-            effectiveTransportNumber = tRes.transportNumber!;
-            autoCreatedTaskNumber = tRes.taskNumber || '';
         }
+        // Existing object + transport_description: the transport is created AFTER the lock (below),
+        // once the lock result shows whether the object already sits in a request. Creating it
+        // first left an empty CR behind whenever the lock failed or the object was already in
+        // another request.
 
         const objectUrl = `${baseUrl}${objInfo.uri}`;
         const sourceUrl = `${objectUrl}/source/main`;
@@ -349,6 +389,27 @@ async function writeProgramCore(args: any) {
             ];
             if (unlockError) lines.push(`Additionally, failed to release the lock taken for this check.\nReason: ${unlockError}\nLock handle: ${lockHandle}. The object may now remain locked — retry with UnlockObject('${programName}') before the next attempt.`);
             return { isError: true, content: [{ type: 'text', text: lines.join('\n') }] };
+        }
+
+        // ── Deferred transport creation (existing object, transport_description) ──
+        // Only now is it known that the lock succeeded. If the object is already in a change
+        // request, SAP keeps using that one and no new CR is created.
+        let reusedExistingTransportNote = '';
+        if (!created && !effectiveTransportNumber && transportDescription) {
+            if (existingCorrNr) {
+                effectiveTransportNumber = existingCorrNr; // pass it as corrNr so SAP doesn't reject the PUT against its own registration
+                reusedExistingTransportNote = `transport_description ignored: ${programName} is already in change request ${existingCorrNr}, which was kept.`;
+            } else {
+                const tRes = await createTransportForObject(String(baseUrl), objInfo.uri, transportDescription, packageName);
+                if (tRes.error) {
+                    const unlockError = await attemptUnlock(objectUrl, lockHandle);
+                    const lines = [tRes.error];
+                    if (unlockError) lines.push(`Additionally, failed to release the lock.\nReason: ${unlockError}\nLock handle: ${lockHandle}. Retry with UnlockObject('${programName}') before the next attempt.`);
+                    return { isError: true, content: [{ type: 'text', text: lines.join('\n') }] };
+                }
+                effectiveTransportNumber = tRes.transportNumber!;
+                autoCreatedTaskNumber = tRes.taskNumber || '';
+            }
         }
 
         // ── Step 2: PUT source code ───────────────────────────────────
@@ -602,9 +663,11 @@ async function writeProgramCore(args: any) {
         if (created && objInfo.type === 'CLAS/OC' && /activation failed/i.test(activationResult)) {
             lines.push(`RECOVERY: This was the class's first activation. Correct the complete source and retry WriteProgram. If SAP rejects the overwrite, use SAP GUI/Eclipse ADT to remove the class's CTS/deletion entry from its change request, remove its inactive-object entry, then delete the repository object before recreating the name.`);
         }
-        if (effectiveTransportNumber) lines.push(`Transport: ${effectiveTransportNumber}${!transportNumber && transportDescription ? ' (auto-created)' : ''}`);
+        if (effectiveTransportNumber) lines.push(`Transport: ${effectiveTransportNumber}${!transportNumber && transportDescription && !reusedExistingTransportNote ? ' (auto-created)' : ''}`);
         if (autoCreatedTaskNumber) lines.push(`Task: ${autoCreatedTaskNumber}`);
+        if (reusedExistingTransportNote) lines.push(reusedExistingTransportNote);
         lines.push(sourceDiagnostics);
+        if (syntaxNote) lines.push(syntaxNote.trim());
         if (hasAnyTextElements) {
             const written: string[] = [];
             if (textSymbols !== null)    written.push(`symbols(${textSymbols.length}c)`);
@@ -801,6 +864,22 @@ export function describeLockHolder(errMsg: string): string | null {
 // first time a source PUT or object-create happens without a corrNr. `ref` may point at an
 // object that does not exist yet — SAP derives the transport layer/target purely from
 // DEVCLASS and the URL's shape, not from the object actually existing (verified live).
+// Best-effort cleanup of a transport WriteProgram itself just auto-created, when the object
+// create that needed it as corrNr then failed — otherwise an empty request is orphaned.
+// SAP only deletes an unreleased transport with no registered objects, so this is refused
+// harmlessly if the failed create did register something. Returns a line for the error text.
+async function discardAutoCreatedTransport(baseUrl: string, transportNumber: string): Promise<string> {
+    try {
+        await makeAdtRequest(`${baseUrl}/sap/bc/adt/cts/transportrequests/${encodeURIComponent(transportNumber)}`,
+            'DELETE', 20000, undefined, undefined, { 'Accept': 'application/*' });
+        return `\nThe transport ${transportNumber} auto-created for this call was empty and has been deleted again.`;
+    } catch (error) {
+        let reason = error instanceof Error ? error.message : String(error);
+        if (error instanceof AxiosError && error.response?.data) reason = parseAdtErrorXml(String(error.response.data)) || reason;
+        return `\nThe transport ${transportNumber} auto-created for this call could NOT be deleted (${reason}) — remove it with ManageTransport action=delete.`;
+    }
+}
+
 export async function createTransportForObject(
     baseUrl: string, ref: string, description: string, devClass: string
 ): Promise<{ transportNumber?: string; taskNumber?: string; error?: string }> {

@@ -3,6 +3,19 @@
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-10-14
+
+### Added
+- **`GetCode resource=OBJECT` batch read — `objects[]`.** Up to 10 objects in one call, fetched in parallel (each entry a name or `{ object_name, kind?, function_group? }`; other args are shared defaults). Output is one `===== NAME =====` section per object; a failing object is reported in place and does not hide the others (`isError` only if all fail); more than 10 is refused.
+- **`WriteProgram` pre-write syntax check — `syntax_check` / `check_only`.** `check_only=true` runs an ADT check run (`POST /sap/bc/adt/checkruns`) of the new source against an existing object and reports `line:col — text` without locking or writing anything; `syntax_check=true` does the same before the lock and refuses the write on any error. Both default off (an include is checked without its master program). A failing check call never blocks a write (`src/lib/syntaxCheck.ts`).
+
+### Fixed
+- **`WriteProgram` with `transport_description` left an empty change request behind when the write was refused.** For an existing object the request is now created after the lock and the reassignment guard. An object already in an open request keeps it (`transport_description` is ignored, said in the response, and the request is passed as `corrNr`); a failed creation unlocks the object. New objects and `FUGR` still create it first (needed as `corrNr` for the create call).
+- **`WriteProgram` dropped nothing when creating a NEW object failed after its auto-created request was made.** The transport this call auto-created is now deleted again and the error says so.
+
+### Changed
+- **Performance: TLS keep-alive and a quickSearch cache.** The shared HTTPS agent reuses connections (`keepAlive: true`, `maxSockets` = `SAP_MAX_CONCURRENT_REQUESTS`). quickSearch GETs with at least one hit are cached for 30 s (`SEARCH_CACHE_TTL_MS`, `0` disables); empty results are never cached and any non-GET request clears the cache.
+
 ## [3.5.1] - 2026-10-12
 
 ### Fixed

@@ -108,7 +108,10 @@ export function createAxiosInstance() {
     if (!axiosInstance) {
         axiosInstance = axios.create({
             httpsAgent: new Agent({
-                rejectUnauthorized: false // Allow self-signed certificates
+                rejectUnauthorized: false, // Allow self-signed certificates
+                // Reuse TLS connections across ADT calls (lock → PUT → unlock → activate etc.)
+                keepAlive: true,
+                maxSockets: Number(process.env.SAP_MAX_CONCURRENT_REQUESTS) || 6
             })
         });
     }
@@ -238,10 +241,35 @@ function releaseRequestSlot(): void {
     }
 }
 
+// quickSearch result cache. Name resolution runs before nearly every write/lock/activate/read
+// and the same name is typically resolved several times per task. Only GETs of quickSearch URLs
+// that returned at least one hit are cached (an empty result may just be search-index lag after a
+// create — never pin it), and ANY non-GET request clears the whole cache, so a create/delete/
+// rename through this process is never masked. Short TTL bounds staleness from other users'
+// changes. Disable with SEARCH_CACHE_TTL_MS=0.
+const SEARCH_CACHE_TTL_MS = Number(process.env.SEARCH_CACHE_TTL_MS ?? 30000);
+const searchCache = new Map<string, { at: number; response: any }>();
+
+function isCacheableSearch(url: string, method: string): boolean {
+    return SEARCH_CACHE_TTL_MS > 0 && method === 'GET' && url.includes('/informationsystem/search?operation=quickSearch');
+}
+
 export async function makeAdtRequest(url: string, method: string, timeout: number, data?: any, params?: any, headers?: Record<string, string>) {
+    const cacheable = isCacheableSearch(url, method) && !params;
+    if (cacheable) {
+        const hit = searchCache.get(url);
+        if (hit && Date.now() - hit.at < SEARCH_CACHE_TTL_MS) return hit.response;
+        searchCache.delete(url);
+    } else if (method !== 'GET') {
+        searchCache.clear();
+    }
     await acquireRequestSlot();
     try {
-        return await executeAdtRequest(url, method, timeout, data, params, headers);
+        const response = await executeAdtRequest(url, method, timeout, data, params, headers);
+        if (cacheable && typeof response.data === 'string' && /objectReference\b/.test(response.data)) {
+            searchCache.set(url, { at: Date.now(), response });
+        }
+        return response;
     } finally {
         releaseRequestSlot();
     }

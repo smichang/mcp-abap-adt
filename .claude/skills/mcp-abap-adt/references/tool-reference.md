@@ -12,7 +12,7 @@ resource's own fields.
 | Tool | `resource` | Use | Notes |
 |---|---|---|---|
 | `SearchObject` | — | Find objects by name | `query` with `*`; optional single `object_type` (`PROG`, `CLAS`, …); not paged — narrow the query |
-| `GetCode` | `OBJECT` | Source of program, include, class, interface, function module, table, structure, data element, domain, CDS | `kind` hint skips auto-detection; `function_group` needed for `kind=FUNC`; a miss runs a "did you mean" search |
+| `GetCode` | `OBJECT` | Source of program, include, class, interface, function module, table, structure, data element, domain, CDS | `objects=["A",{"object_name":"B","kind":"TABL"}]` reads up to 10 objects in parallel, one section each; `kind` hint skips auto-detection; `function_group` needed for `kind=FUNC`; a miss runs a "did you mean" search |
 | | `VERSION` | Version history / old source / diff | list without `version`; `version` for old source; `compare_to` for a unified diff; for classes `class_include` selects `main`/`definitions`/`implementations`/`macros`/`testclasses` (history is per include) |
 | | `WHEREUSED` | Where-used list | `object_name` + `object_type`; `max_results`/`offset`; cached ~3 min |
 | | `ENHANCEMENTS` | Enhancement implementations / per-object list / function-group scan | `scan_all=true` fans out and is capped by `max_includes` |
@@ -41,7 +41,7 @@ Do not use background mode for writes.
 
 | Tool | What it does | Traps |
 |---|---|---|
-| `WriteProgram` | Create/overwrite programs, includes, classes, function modules (and function groups, create-only); text elements; `transport_description` auto-creates a titled transport for a new object | Accepts `source_file` (preferred) or `source_code`. Create needs `description` + `package_name`. FM source carries its signature inline (`FUNCTION f IMPORTING … .`); no `*"` comment blocks; `TABLES` params must be `LIKE <DDIC structure>`. A class's `source_code` is the full definition + implementation. Physical lines > 255 chars are rejected |
+| `WriteProgram` | Create/overwrite programs, includes, classes, function modules (and function groups, create-only); text elements; `transport_description` auto-creates a titled transport for a new object | Accepts `source_file` (preferred) or `source_code`. Create needs `description` + `package_name`. FM source carries its signature inline (`FUNCTION f IMPORTING … .`); no `*"` comment blocks; `TABLES` params must be `LIKE <DDIC structure>`. A class's `source_code` is the full definition + implementation. Physical lines > 255 chars are rejected. `check_only=true` syntax-checks new source against an existing object (no lock/write, returns `line:col — text`); `syntax_check=true` does it before the lock and refuses the write on errors (default off — includes are checked without their master program) |
 | `ManageDDIC` | Structures, table types, data elements, domains, CDS views (`create`/`update`) | Descriptions of table types and domains cannot be read back after creation, so `update` rejects `description`. No delete — use `DeleteObject` |
 | `ManageMessageClass` | SE91 classes and messages (`create`/`update`/`delete`) | `update` upserts messages in one language (master by default, or `language`); deleting messages is separate (`delete_messages`, all languages). Long texts cannot be written through ADT |
 | `ActivateObjects` | Mass activation in one request; `rfc_enabled` toggles an FM's Remote-Enabled flag | A standalone include needs a program that `INCLUDE`s it before the first activation |

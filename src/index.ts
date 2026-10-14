@@ -150,6 +150,17 @@ export class mcp_abap_adt_server {
                   type: 'string',
                   description: 'Name of the ABAP object. Used by OBJECT, VERSION, ENHANCEMENTS, WHEREUSED, DYNPRO (the program owning the screens). Examples: ZMY_PROGRAM, ZCL_MY_CLASS, ZIF_MY_INTERFACE, ZMY_INCLUDE, VBAK, BAPI_TE_AUFKX, ZMY_FG, ZMY_FM, MATNR, ZPROD_BATCH'
                 },
+                objects: {
+                  type: 'array',
+                  description: 'OBJECT only. Batch read: up to 10 objects in ONE call, fetched in parallel — each entry is a name or { object_name, kind?, function_group? }. Use instead of object_name. Output is one "===== NAME =====" section per object; a failing object is reported in place and does not hide the others. Other top-level args apply to every entry.',
+                  items: {
+                    anyOf: [
+                      { type: 'string' },
+                      { type: 'object', properties: { object_name: { type: 'string' }, kind: { type: 'string' }, function_group: { type: 'string' } }, required: ['object_name'] }
+                    ]
+                  },
+                  maxItems: 10
+                },
                 kind: {
                   type: 'string',
                   description: 'OBJECT only. Optional explicit kind hint to skip auto-detect. Values: PROG, CLAS, INTF, INCL, TABL, STRU, VIEW, FUGR, FUNC, DTEL, DOMA, CDS'
@@ -540,7 +551,7 @@ export class mcp_abap_adt_server {
                 },
                 transport_description: {
                   type: 'string',
-                  description: 'Optional. When transport_number is omitted, explicitly creates a new transport with THIS description instead of letting SAP auto-generate one. Requires package_name. Ignored if transport_number is also given. Maximum 60 characters.',
+                  description: 'Optional. When transport_number is omitted, explicitly creates a new transport with THIS description instead of letting SAP auto-generate one. Requires package_name. Ignored if transport_number is also given, or if an existing object is already in an open transport (that transport is kept). For an existing object the transport is created only after the lock and reassignment guard pass, so a refusal leaves no empty transport. Maximum 60 characters.',
                   maxLength: 60
                 }
               },
@@ -607,6 +618,16 @@ export class mcp_abap_adt_server {
                   type: 'boolean',
                   description: 'Whether to activate after writing. Default: true',
                   default: true
+                },
+                syntax_check: {
+                  type: 'boolean',
+                  description: 'Optional. Run an ADT syntax check of the new source BEFORE locking; on any error nothing is locked or written and the errors (line:col — text) are returned. Existing objects only (a new object is created first). A failing check call never blocks the write. Default false — includes are checked without their master program, so a false error is possible there.',
+                  default: false
+                },
+                check_only: {
+                  type: 'boolean',
+                  description: 'Optional. Only syntax-check source_code/source_file against the existing object and report the messages — no lock, no write, no transport. Implies syntax_check. Default false.',
+                  default: false
                 },
                 description: {
                   type: 'string',

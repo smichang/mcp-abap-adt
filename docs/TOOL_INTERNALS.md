@@ -23,6 +23,10 @@ Lists objects the connection's own SAP user has **inactive** (written but not ac
 ```
 `ioc:deleted="true"` marks a pending deletion. The handler renders whatever `ioc:transport` attributes it finds generically rather than assuming a shape (unverified populated case). Useful before a mass-activate call to see what's queued.
 
+## GetCode `OBJECT` batch — `objects[]` (`getObjectsBatch` in `handleGetCode.ts`)
+
+`objects` replaces `object_name`: up to 10 names or `{ object_name, kind?, function_group? }`, other args shared. `Promise.all` over `handleGetObject` (SAP concurrency still capped by the `makeAdtRequest` semaphore); output is `===== NAME =====` sections, a failing object reported in place (`isError` only if all fail), >10 refused. `output_file`/`background` apply to the combined result.
+
 ## GetCode `DYNPRO` — `handleGetDynpro.ts`
 
 Classic SAP GUI screens. **Standard ADT has no screen content contract** — `objectstructure` lists screens (`PROG/PS`) and their VIT URI returns basic properties only; elements and flow logic sit compressed in `DYNPSOURCE`. So this calls the standalone SICF endpoint `default_host/zmcp/dynpro` (`ZCL_HTTP_MCP_DYNPRO` → `ZCL_MCP_DYNPRO` → `RPY_DYNPRO_READ`, own `ZCX_MCP_DYNPRO`). `object_name` = owning program (`SAPL<group>` for a function group). No `dynnr` → screen list (paged + `queryCache`); `dynnr` → readable summary; `raw=true` → full JSON (`header`/`containers`/`fields_to_containers`/`flow_logic`/`params`, lower-case `RPY_*` names — the shape `RPY_DYNPRO_INSERT` takes).
@@ -338,7 +342,7 @@ After `createObject()`/`createFunctionModule()`, resolving the just-created obje
 
 The lock result's `CORRNR`/`CORRUSER`/`CORRTEXT` show the transport the object is currently locked under. If a **different** `transport_number` is supplied, `WriteProgram` unlocks and refuses rather than let SAP silently move the object into the new request. Same transport, no `transport_number`, or not-yet-in-any-request all proceed normally.
 
-**Check the object's current transport before creating a new one** — order matters, otherwise a refused reassignment leaves an empty duplicate transport behind. **Prefer `UnlockObject` over `GetTransport` for this check**: `GetTransport`'s list mode is scoped to the connection's own user and returns headers only, so an object already sitting in a *different user's* open transport is invisible to it — `UnlockObject`'s LOCK/UNLOCK cycle reads `CORRNR` straight off the object's own CTS registration regardless of owner. Recovery from an already-created orphan: delete it (`ManageTransport action=delete`, succeeds on an empty transport) and retry `WriteProgram` with the transport the refusal message named.
+**For an existing object, `transport_description` creates the transport only after the LOCK succeeds and the guard passes** (an object already in a request keeps it and the description is ignored), so a refusal or lock failure leaves no empty CR. Brand-new objects and `FUGR` still create it up front (needed as `corrNr` for the create call); if the object create then fails, `discardAutoCreatedTransport()` deletes that transport again — a failure *after* the object exists leaves the request, which is no longer empty. **Prefer `UnlockObject` over `GetTransport` for this check**: `GetTransport`'s list mode is scoped to the connection's own user and returns headers only, so an object already sitting in a *different user's* open transport is invisible to it — `UnlockObject`'s LOCK/UNLOCK cycle reads `CORRNR` straight off the object's own CTS registration regardless of owner. Recovery from an already-created orphan: delete it (`ManageTransport action=delete`, succeeds on an empty transport) and retry `WriteProgram` with the transport the refusal message named.
 
 ### `transport_description`
 
@@ -352,6 +356,14 @@ When `transport_number` is omitted, SAP auto-creates one on first write, titled 
 
 - FM source must not include `*"---` parameter comment blocks — SAP manages those.
 - Close SE37/SE38/SE80 sessions before writing; a lock conflict names the editing user and flags whether it matches our own `SAP_USERNAME` (likely a leftover session — try `UnlockObject`) vs. a different developer (coordinate, don't force).
+
+### Pre-write syntax check (`syntax_check` / `check_only`, `src/lib/syntaxCheck.ts`)
+
+`POST /sap/bc/adt/checkruns?reporters=abapCheckRun` (`Content-Type: application/vnd.sap.adt.checkobjects+xml`, `Accept: application/vnd.sap.adt.checkmessages+xml`) with the NEW source inline (base64 `chkrun:artifact` for `…/source/main`, `chkrun:version="inactive"`) — SAP checks the text sent, not the stored source. Stateless: no lock, no session, outside the stateful gate. Messages are `chkrun:checkMessage` (`chkrun:type` E/W/I, `chkrun:shortText`, `chkrun:uri` ending `#start=line,col`).
+
+- `check_only=true` → report only; nothing locked/written/transported; the object must already exist.
+- `syntax_check=true` → same check before the lock; any error refuses the write ("Nothing was locked or written"), warnings are appended to the normal response. A new object is created first, so it is not checked beforehand. A failing check *call* (HTTP error) never blocks the write.
+- Both default **off**: an include is checked without its master program, so false errors are possible there.
 
 ### Flow
 

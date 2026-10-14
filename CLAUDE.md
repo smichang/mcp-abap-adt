@@ -53,10 +53,11 @@ The dispatcher handlers (`handleGetCode.ts`, `handleGetDiagnostics.ts`, `handleG
 |--------|---------|
 | `getBaseUrl()` | SAP base URL as Buffer — safe in template literals |
 | `makeAdtRequest(url, method, timeout, data?, params?, headers?)` | Authenticated SAP call; handles CSRF for any verb `!== 'GET'`. On a 403 CSRF failure, refetches token *and* session cookie together before retrying. On `400 Session not found` it drops the stored cookies and CSRF token and retries once, except when the request carried a `sap-contextid` (a stateful sequence's lock lived in the dead session, so it fails instead). All calls funnel through a global concurrency semaphore (default 6, env `SAP_MAX_CONCURRENT_REQUESTS`). Never call the SAP HTTP layer outside this function. |
+| quickSearch cache (inside `makeAdtRequest`) | GETs of `…/informationsystem/search?operation=quickSearch` that returned ≥1 `objectReference` are cached 30 s (`SEARCH_CACHE_TTL_MS`, `0` = off). Empty results are never cached (search-index lag after a create); **any non-GET request clears the whole cache**. Other users' changes can show up to 30 s late. |
 | `parseAdtErrorXml(xmlString)` | Human-readable message from SAP ADT error XML |
 | `return_response(axiosResponse)` | Wraps `{ isError: false, content: [{ type:'text', text }] }` |
 | `return_error(error)` | Wraps `{ isError: true, content: [...] }`; for `AxiosError` uses `error.response?.data ?? error.message` |
-| `createAxiosInstance()` | Singleton axios, `rejectUnauthorized: false` (self-signed SAP certs) |
+| `createAxiosInstance()` | Singleton axios, `rejectUnauthorized: false` (self-signed SAP certs), HTTPS `keepAlive: true` with `maxSockets` = `SAP_MAX_CONCURRENT_REQUESTS` so lock → PUT → unlock → activate reuse one TLS connection (stateful sessions ride the `sap-contextid` cookie, not the socket) |
 | `getAuthHeaders()` | `{ Authorization, 'sap-client', 'sap-language'? }` |
 | `appendCookie(extra)` / `removeCookie(prefix)` | Manage global session cookies (e.g. `sap-contextid`). **Every handler opening a stateful lock session calls `removeCookie('sap-contextid')` immediately before its `LOCK` POST**, not just after unlock. |
 
@@ -180,7 +181,7 @@ docs/TOOL_INTERNALS.md     # per-tool endpoints, request shapes and traps
 
 `src/index.ts` exports `mcp_abap_adt_server` and `getConfig()`/`SapConfig`. Config resolves (process env / keystore / `.env`, in that order) for `SAP_URL`, `SAP_USERNAME`, `SAP_PASSWORD`, `SAP_CLIENT` (required), `SAP_LANGUAGE` (optional — adds `sap-language` header; honored for DDIC/message-class text, not text-elements). Restart/`/mcp` reload after changing any of these.
 
-`SAP_MAX_CONCURRENT_REQUESTS` (default 6) caps `makeAdtRequest`'s concurrency semaphore. `QUERY_CACHE_TTL_MS` (default 180000) controls `queryCache.ts`'s TTL.
+`SAP_MAX_CONCURRENT_REQUESTS` (default 6) caps `makeAdtRequest`'s concurrency semaphore. `SEARCH_CACHE_TTL_MS` (default 30000, `0` = off) controls the quickSearch cache in `makeAdtRequest`. `QUERY_CACHE_TTL_MS` (default 180000) controls `queryCache.ts`'s TTL.
 
 Tests in `src/index.test.ts` are live integration tests against the real SAP system, needing a valid `.env`.
 
