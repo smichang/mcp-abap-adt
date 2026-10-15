@@ -1,6 +1,7 @@
 import { McpError, ErrorCode } from '../lib/utils';
 import { makeAdtRequest, return_error, getBaseUrl, parseAdtErrorXml } from '../lib/utils';
 import { unifiedDiff } from '../lib/unidiff';
+import { listSnapshots, readSnapshot } from '../lib/snapshots';
 import { AxiosError } from 'axios';
 
 // ADT source URL prefixes by object type
@@ -172,6 +173,17 @@ function versionTable(entries: VersionEntry[]): string[] {
 }
 
 /** List mode for a class: one section per include, so a change to local classes/test classes is visible too. */
+function snapshotSection(snaps: ReturnType<typeof listSnapshots>, suffix = ''): string[] {
+    if (snaps.length === 0) return [];
+    return [
+        '',
+        `Local pre-write snapshots${suffix} (${snaps.length}, newest first) — the source each WriteProgram replaced, kept on this machine; SAP itself keeps one version for a local object:`,
+        ...snaps.slice(0, 10).map(s => `  snapshot:${s.id}   ${s.lines} lines, ${s.bytes} bytes`),
+        ...(snaps.length > 10 ? [`  … ${snaps.length - 10} older`] : []),
+        'Use version=snapshot:<id> for the text, or compare_to=snapshot:<id> to diff it against the active source (add version= to diff two).'
+    ];
+}
+
 async function listClassHistories(objectUrl: string, objectName: string) {
     const includes = await discoverClassIncludes(objectUrl);
     const lines: string[] = [`Version History: ${objectName} (CLAS) — ${includes.length} include(s): ${includes.join(', ')}`];
@@ -238,7 +250,15 @@ export async function handleGetObjectVersion(args: any) {
         const isClass = resolvedType === 'CLAS';
         // Class, list mode, no include chosen → every include's history (a CR may touch only local classes).
         if (isClass && !classInclude && !version && !compareTo) {
-            return await listClassHistories(objectUrl, objectName);
+            const res = await listClassHistories(objectUrl, objectName);
+            // the class overview used to return before the snapshot section was built (lifecycle test 2)
+            if (!res.isError && res.content?.[0]) {
+                for (const inc of ['main', ...CLASS_INCLUDES.filter(i => i !== 'main')]) {
+                    const snaps = listSnapshots(inc === 'main' ? objectName : `${objectName}.${inc}`);
+                    if (snaps.length) res.content[0].text += '\n' + snapshotSection(snaps, inc === 'main' ? '' : ` — include ${inc}`).join('\n');
+                }
+            }
+            return res;
         }
         const include = isClass ? (classInclude || 'main') : '';
         let classIncludes: string[] = [];
@@ -251,6 +271,12 @@ export async function handleGetObjectVersion(args: any) {
             if (!xmlData) return { isError: true, content: [{ type: 'text', text: `Could not read the version history of ${objectName}'s '${include}' include.` }] };
         }
         const label = isClass ? `${resolvedType}, include ${include}` : resolvedType;
+
+        // Local pre-write snapshots (main source only; a class's other includes are not snapshotted).
+        // WriteProgram snapshots the main source under the class name and a class include under NAME.include
+        const snapKey = isClass && include !== 'main' ? `${objectName}.${include}` : objectName;
+        const localSnaps = listSnapshots(snapKey);
+        const snapshotLines = (): string[] => snapshotSection(localSnaps);
 
         const entries = parseVersionEntries(xmlData);
         if (entries === null) {
@@ -268,6 +294,17 @@ export async function handleGetObjectVersion(args: any) {
 
         // Returns source text for a version id (transport or version number), or "active"/undefined for current source.
         const getVersionSource = async (verId?: string): Promise<string> => {
+            // snapshot:<id> | snapshot:latest — the local pre-write copy WriteProgram kept (SAP keeps
+            // no history for a local $TMP object, so this is the only thing to diff against there).
+            if (verId && verId.toLowerCase().startsWith('snapshot:')) {
+                const snapId = verId.slice('snapshot:'.length).trim();
+                const snap = readSnapshot(snapKey, snapId);
+                if (snap === null) {
+                    throw new McpError(ErrorCode.InvalidParams,
+                        `No local snapshot '${snapId}' for '${snapKey}'. ${localSnaps.length ? 'Available: ' + localSnaps.map(s => 'snapshot:' + s.id).join(', ') : 'None exist (they are made by WriteProgram on this machine, kept in the temp dir, and lost when it is cleaned).'}`);
+                }
+                return snap;
+            }
             if (!verId || verId.toLowerCase() === 'active') {
                 const activeUrl = isClass && include !== 'main' ? `${objectUrl}/includes/${include}` : `${objectUrl}/source/main`;
                 const r = await makeAdtRequest(activeUrl, 'GET', 30000);
@@ -333,7 +370,7 @@ export async function handleGetObjectVersion(args: any) {
 
         // ── no version/compare → list all versions ──
         if (entries.length === 0) {
-            return { isError: false, content: [{ type: 'text', text: `No version history found for '${objectName}' (${label}).` }] };
+            return { isError: false, content: [{ type: 'text', text: [`No version history found for '${objectName}' (${label}).`, ...snapshotLines()].join('\n') }] };
         }
 
         const lines: string[] = [];
@@ -342,6 +379,7 @@ export async function handleGetObjectVersion(args: any) {
         lines.push(...versionTable(entries));
         lines.push('');
         lines.push('Tip: pass a Version/Transport above as `version` to fetch its source, or as `compare_to` (with optional `version`) to diff.');
+        lines.push(...snapshotLines());
 
         return { isError: false, content: [{ type: 'text', text: lines.join('\n') }] };
     } catch (error) {

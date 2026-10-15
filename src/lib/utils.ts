@@ -1,9 +1,12 @@
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { clearQueryCache } from './queryCache';
 import axios, { AxiosError, AxiosInstance } from 'axios';
 import { describeHttpErrorBody } from './httpError';
 import { mergeCookies, hasSessionCookie, Cooldown } from './cookieJar';
 export { describeHttpErrorBody };
 import { Agent } from 'https';
+import { readFileSync } from 'fs';
+import { rootCertificates } from 'tls';
 import { AxiosResponse } from 'axios';
 import { getConfig, SapConfig } from '../index'; // getConfig needs to be exported from index.ts
 
@@ -110,8 +113,23 @@ let axiosInstance: AxiosInstance | null = null;
 let httpsAgent: Agent | null = null;
 export function createAxiosInstance() {
     if (!axiosInstance) {
+        // TLS: SAP_CA_FILE trusts a private CA bundle (added to the system roots);
+        // TLS_REJECT_UNAUTHORIZED=1 enforces verification. Default stays 0 (self-signed SAP certs).
+        let ca: string[] | undefined;
+        if (process.env.SAP_CA_FILE) {
+            try {
+                const pem = readFileSync(process.env.SAP_CA_FILE, 'utf8');
+                if (!pem.includes('-----BEGIN CERTIFICATE-----')) throw new Error('no PEM');
+                ca = [...rootCertificates, pem];
+            } catch {
+                throw new Error('SAP_CA_FILE must name a readable PEM certificate bundle');
+            }
+        }
+        const tlsEnv = process.env.TLS_REJECT_UNAUTHORIZED;
+        if (tlsEnv !== undefined && !['0', '1'].includes(tlsEnv)) throw new Error('TLS_REJECT_UNAUTHORIZED must be 0 or 1');
         httpsAgent = new Agent({
-            rejectUnauthorized: false, // Allow self-signed certificates
+            rejectUnauthorized: tlsEnv === '1',
+            ca,
             // Reuse TLS connections across ADT calls (lock → PUT → unlock → activate etc.)
             keepAlive: true,
             maxSockets: Number(process.env.SAP_MAX_CONCURRENT_REQUESTS) || 6,
@@ -119,7 +137,7 @@ export function createAxiosInstance() {
             // scripts) is not held open by sockets nobody will reuse.
             timeout: 15000
         });
-        axiosInstance = axios.create({ httpsAgent });
+        axiosInstance = axios.create({ httpsAgent, maxContentLength: 64 * 1024 * 1024, maxBodyLength: 64 * 1024 * 1024 });
     }
     return axiosInstance;
 }
@@ -279,6 +297,11 @@ export async function makeAdtRequest(url: string, method: string, timeout: numbe
         searchCache.delete(url);
     } else if (method !== 'GET') {
         searchCache.clear();
+        // POST also carries READ-ONLY queries (where-used, data preview, check runs, ATC, unit tests,
+        // class/program run) — those must not wipe a paged result the caller is still walking through.
+        if (!/\/usageReferences|\/datapreview\/|\/checkruns|\/atc\/|\/abapunit\/|\/classrun\/|\/programrun\/|_action=(LOCK|UNLOCK)/.test(url + (params ? '?' + new URLSearchParams(params as any).toString() : ''))) {
+            clearQueryCache();
+        }
     }
     await acquireRequestSlot();
     try {

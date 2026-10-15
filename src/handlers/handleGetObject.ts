@@ -14,8 +14,10 @@ import { suggestObjectNames, formatSuggestions } from '../lib/suggestNames';
 type Kind = 'PROG' | 'CLAS' | 'INTF' | 'INCL' | 'TABL' | 'STRU' | 'VIEW' | 'FUGR' | 'FUNC' | 'DTEL' | 'DOMA' | 'CDS';
 
 const KIND_DISPATCH: Record<Kind, (args: any, name: string) => Promise<any>> = {
-    PROG: (_a, name) => fetchProgramWithSymbols(name),
-    CLAS: (_a, name) => handleGetClass({ class_name: name }),
+    PROG: (a, name) => fetchProgramWithSymbols(name, normalizeTextElements(a?.text_elements)),
+    CLAS: (a, name) => (a?.class_include && String(a.class_include).toLowerCase() !== 'main')
+        ? fetchClassInclude(name, String(a.class_include).toLowerCase())
+        : handleGetClass({ class_name: name }),
     INTF: (_a, name) => handleGetInterface({ interface_name: name }),
     INCL: (_a, name) => handleGetInclude({ include_name: name }),
     TABL: (_a, name) => handleGetTable({ table_name: name }),
@@ -48,7 +50,38 @@ const ADT_TYPE_TO_KIND: Record<string, Kind> = {
     'DDLS/DV': 'CDS'
 };
 
-async function fetchProgramWithSymbols(name: string): Promise<any> {
+// text_elements: true (default) = source followed by its text symbols / selection texts / headings;
+// false = source only (clean text to patch, diff or write back); 'only' = just the text elements
+// (the blocks WriteProgram takes as text_symbols / selection_texts / list_headings).
+type TextElementsMode = 'with' | 'none' | 'only';
+function normalizeTextElements(v: any): TextElementsMode {
+    if (v === false || String(v).toLowerCase() === 'false') return 'none';
+    if (String(v).toLowerCase() === 'only') return 'only';
+    return 'with';
+}
+
+// A class's LOCAL include (the part that is not the global class's main source) — the read-side twin of
+// WriteProgram class_include. Source only, as stored: clean text to patch, diff or write back.
+const LOCAL_CLASS_INCLUDES = ['definitions', 'implementations', 'macros', 'testclasses'];
+async function fetchClassInclude(className: string, include: string): Promise<any> {
+    if (!LOCAL_CLASS_INCLUDES.includes(include)) {
+        throw new McpError(ErrorCode.InvalidParams, `class_include must be one of ${LOCAL_CLASS_INCLUDES.join(', ')} (omit it, or pass main, for the class's main source)`);
+    }
+    const baseUrl = String(await getBaseUrl());
+    const url = `${baseUrl}/sap/bc/adt/oo/classes/${encodeURIComponent(className.toLowerCase())}/includes/${include}`;
+    try {
+        const r = await makeAdtRequest(url, 'GET', 30000, undefined, undefined, { 'Accept': 'text/plain' });
+        return { isError: false, content: [{ type: 'text', text: typeof r.data === 'string' ? r.data : String(r.data ?? '') }] };
+    } catch (error: any) {
+        if (error?.response?.status === 404) {
+            return { isError: true, content: [{ type: 'text', text: `Class ${className} has no '${include}' include. Create it with WriteProgram class_include=${include}.` }] };
+        }
+        throw error;
+    }
+}
+
+async function fetchProgramWithSymbols(name: string, mode: TextElementsMode = 'with'): Promise<any> {
+    if (mode === 'none') return handleGetProgram({ program_name: name });
     const lower = name.toLowerCase();
     const baseUrl = String(await getBaseUrl());
     // SAP ADT's text-elements endpoints return master-language content only. They ignore
@@ -67,7 +100,7 @@ async function fetchProgramWithSymbols(name: string): Promise<any> {
     };
 
     const [mainRes, symbolsTxt, selectionsTxt, headingsTxt] = await Promise.all([
-        handleGetProgram({ program_name: name }),
+        mode === 'only' ? Promise.resolve(undefined) : handleGetProgram({ program_name: name }),
         fetchCategory('symbols',    'application/vnd.sap.adt.textelements.symbols.v1'),
         fetchCategory('selections', 'application/vnd.sap.adt.textelements.selections.v1'),
         fetchCategory('headings',   'application/vnd.sap.adt.textelements.headings.v1')
@@ -77,6 +110,16 @@ async function fetchProgramWithSymbols(name: string): Promise<any> {
         // Headings always returns a stub with empty values; only show if any line has content after '='
         return t.split('\n').some(l => /=\s*\S/.test(l));
     };
+
+    if (mode === 'only') {
+        // Bare blocks, in the exact format WriteProgram's text_symbols / selection_texts / list_headings
+        // arguments take — no banner comments to strip.
+        const blocks: string[] = [];
+        if (symbolsTxt.trim())    blocks.push(`--- text_symbols ---\n${symbolsTxt.trim()}`);
+        if (selectionsTxt.trim()) blocks.push(`--- selection_texts ---\n${selectionsTxt.trim()}`);
+        if (isMeaningfulHeadings(headingsTxt)) blocks.push(`--- list_headings ---\n${headingsTxt.trim()}`);
+        return { isError: false, content: [{ type: 'text', text: blocks.length ? blocks.join('\n\n') : `Program '${name}' has no text elements.` }] };
+    }
 
     const parts: string[] = [String((mainRes?.content?.[0] as any)?.text || '')];
     if (symbolsTxt.trim())     parts.push(`\n* ─── Text Symbols (TEXT-XXX, master language) ───\n${symbolsTxt.trim()}`);
@@ -168,6 +211,9 @@ export async function handleGetObject(args: any) {
                 isError: true,
                 content: [{ type: 'text', text: `Found '${name}' (type ${foundType}) but kind is not supported by GetObject. Pass kind=PROG|CLAS|INTF|INCL|TABL|STRU|VIEW|FUGR|FUNC|DTEL|DOMA|CDS to bypass auto-detect, or use a more specific tool.` }]
                 };
+        }
+        if (args?.class_include && kind !== 'CLAS' && String(args.class_include).toLowerCase() !== 'main') {
+            throw new McpError(ErrorCode.InvalidParams, `class_include is only valid for a class ('${name}' is ${kind}).`);
         }
         return await KIND_DISPATCH[kind](args, name);
     } catch (error) {

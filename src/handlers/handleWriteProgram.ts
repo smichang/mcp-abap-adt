@@ -6,7 +6,10 @@ import { getConfig } from '../index';
 import { AxiosError } from 'axios';
 import { promises as fs } from 'fs';
 import * as path from 'path';
-import { runSyntaxCheck, formatSyntaxMessages } from '../lib/syntaxCheck';
+import { saveSnapshot } from '../lib/snapshots';
+import { writeClassInclude } from './handleWriteClassInclude';
+import { rememberPatch, recallPatch, PENDING_PATCH_TTL_MINUTES } from '../lib/pendingPatch';
+import { checkSourceInContext, formatSyntaxMessages, locateActivationMessages, ActivationMsg } from '../lib/syntaxCheck';
 import { validateEdits, applyEdits, PatchEdit } from '../lib/sourcePatch';
 
 interface ObjectInfo {
@@ -41,6 +44,13 @@ const CREATION_TYPES: Record<string, { creationPath: string; rootName: string; n
         rootName: 'class:abapClass',
         nameSpace: 'xmlns:class="http://www.sap.com/adt/oo/classes"',
         typeId: 'CLAS/OC'
+    },
+    // An interface could not be created at all before (only read): same generic template, own collection.
+    'INTF': {
+        creationPath: 'oo/interfaces',
+        rootName: 'intf:abapInterface',
+        nameSpace: 'xmlns:intf="http://www.sap.com/adt/oo/interfaces"',
+        typeId: 'INTF/OI'
     }
 };
 
@@ -61,7 +71,7 @@ const CREATION_TYPES: Record<string, { creationPath: string; rootName: string; n
 //     the real ceiling for both is 30, confirmed by a clean create+activate at exactly 30
 //     chars and a hard SAP rejection at 41.)
 const MAX_NAME_LENGTH: Record<string, number> = {
-    'PROG': 30, 'INCL': 30, 'FUGR': 26, 'CLAS': 30, 'FUNC': 30
+    'PROG': 30, 'INCL': 30, 'FUGR': 26, 'CLAS': 30, 'INTF': 30, 'FUNC': 30
 };
 
 function validateNameLength(name: string, objectType: string, label: string): void {
@@ -79,6 +89,8 @@ export async function handleWriteProgram(args: any) {
         return { isError: true, content: [{ type: 'text', text: gate.message }] };
     }
     try {
+        // a class's local includes (tests, local classes/types/macros) have their own resource
+        if (args?.class_include) return await writeClassInclude(args);
         return await writeProgramCore(args);
     } finally {
         releaseStatefulOperationLock();
@@ -97,7 +109,18 @@ async function writeProgramCore(args: any) {
         const transportDescription = args?.transport_description ? String(args.transport_description) : '';
         const activate = args?.activate !== false; // default true
         const checkOnly = args?.check_only === true;
-        const patchMode = args?.edits !== undefined;
+        // apply_patch=<id> re-uses the edits of an earlier passed dry run (see lib/pendingPatch.ts)
+        const applyPatchId = args?.apply_patch ? String(args.apply_patch).trim() : '';
+        let editsArg: any = args?.edits;
+        if (applyPatchId) {
+            if (editsArg !== undefined || args?.source_file || (typeof args?.source_code === 'string' && args.source_code.trim().length > 0)) {
+                throw new McpError(ErrorCode.InvalidParams, 'apply_patch cannot be combined with edits, source_code or source_file.');
+            }
+            const recalled = recallPatch(applyPatchId, String(args?.program_name ?? ''));
+            if ('error' in recalled) throw new McpError(ErrorCode.InvalidParams, recalled.error);
+            editsArg = recalled.edits;
+        }
+        const patchMode = editsArg !== undefined;
         const syntaxCheck = checkOnly || args?.syntax_check === true;
         const description = args?.description ? String(args.description) : '';
         const packageName = args?.package_name ? String(args.package_name).toUpperCase() : '';
@@ -173,7 +196,7 @@ async function writeProgramCore(args: any) {
                 throw new McpError(ErrorCode.InvalidParams, 'edits cannot be combined with source_code or source_file — use edits to patch the current SAP source, or source_code for a full rewrite.');
             }
             try {
-                patchEdits = validateEdits(args.edits);
+                patchEdits = validateEdits(editsArg);
             } catch (e: any) {
                 throw new McpError(ErrorCode.InvalidParams, e?.message || String(e));
             }
@@ -263,13 +286,17 @@ async function writeProgramCore(args: any) {
                 }
             } else {
                 try {
-                    const check = await runSyntaxCheck(String(baseUrl), objInfo.uri, sourceCode);
+                    const check = await checkSourceInContext(String(baseUrl), objInfo.uri, sourceCode);
                     const report = formatSyntaxMessages(check);
                     if (check.errors > 0) {
                         return { isError: true, content: [{ type: 'text', text: `${report}\nNothing was locked or written.` }] };
                     }
                     if (checkOnly) {
-                        return { isError: false, content: [{ type: 'text', text: `${patchSummary ? patchSummary + '\n' : ''}${report}\nCheck only — nothing was locked or written.` }] };
+                        // A passed dry run of edits[] can be applied by id — no need to re-send them.
+                        const keep = patchMode && !applyPatchId
+                            ? `\nTo apply this exact patch: WriteProgram(program_name="${programName}", apply_patch="${rememberPatch(programName, patchEdits)}", …same activate/transport options) — valid ${PENDING_PATCH_TTL_MINUTES} min; the edits are re-applied to the then-current source.`
+                            : '';
+                        return { isError: false, content: [{ type: 'text', text: `${patchSummary ? patchSummary + '\n' : ''}${report}\nCheck only — nothing was locked or written.${keep}` }] };
                     }
                     syntaxNote = `\n${report}`;
                 } catch (e: any) {
@@ -432,6 +459,8 @@ async function writeProgramCore(args: any) {
         // ── Deferred transport creation (existing object, transport_description) ──
         // Only now is it known that the lock succeeded. If the object is already in a change
         // request, SAP keeps using that one and no new CR is created.
+        let previousSource: string | null = null; // what this write is about to replace (for the local snapshot)
+        let snapshotNote = '';
         let reusedExistingTransportNote = '';
         if (!created && !effectiveTransportNumber && transportDescription) {
             if (existingCorrNr) {
@@ -455,6 +484,7 @@ async function writeProgramCore(args: any) {
             let failure = '';
             try {
                 const lockedSource = await readCurrentSource(sourceUrl);
+                previousSource = lockedSource;
                 if (lockedSource !== patchBaseSource) {
                     const again = applyEdits(lockedSource, patchEdits);
                     if (again.ok) {
@@ -475,6 +505,17 @@ async function writeProgramCore(args: any) {
             }
         }
 
+        // ── Local snapshot of the text this write replaces (best effort; see lib/snapshots.ts) ──
+        if (!created && objInfo) {
+            try {
+                if (previousSource === null) previousSource = await readCurrentSource(sourceUrl);
+                if (previousSource !== null && previousSource !== sourceCode) {
+                    const sid = saveSnapshot(programName, previousSource);
+                    if (sid) snapshotNote = `Previous source kept as local snapshot ${sid} — GetCode VERSION version=snapshot:${sid} (or compare_to=snapshot:${sid}).`;
+                }
+            } catch { /* a snapshot problem never blocks the write */ }
+        }
+
         // ── Step 2: PUT source code ───────────────────────────────────
         try {
             const putParams: Record<string, string> = { lockHandle };
@@ -486,6 +527,21 @@ async function writeProgramCore(args: any) {
                 { 'Content-Type': 'text/plain; charset=utf-8', 'X-sap-adt-sessiontype': 'stateful' }
             );
         } catch (error) {
+            // A shell this very call created must not outlive a refused first write: it would sit
+            // there inactive and empty, and the retry would then say "written" instead of "created"
+            // (lifecycle test 2, class with a local test class). We still hold the lock, so delete
+            // it now (an ADT DELETE needs the lock handle), then release.
+            let removedNote = '';
+            if (created) {
+                try {
+                    const delParams: Record<string, string> = { lockHandle };
+                    if (effectiveTransportNumber) delParams['corrNr'] = effectiveTransportNumber;
+                    await makeAdtRequest(objectUrl, 'DELETE', 20000, undefined, delParams, { 'Accept': 'application/*', 'X-sap-adt-sessiontype': 'stateful' });
+                    removedNote = `The ${objInfo.typeLabel} shell this call had just created was removed again — nothing is left behind; fix the source and run the same call again.`;
+                } catch (delError) {
+                    removedNote = `The ${objInfo.typeLabel} shell this call created could NOT be removed (${delError instanceof AxiosError && delError.response?.data ? parseAdtErrorXml(String(delError.response.data)) || delError.message : delError instanceof Error ? delError.message : String(delError)}) — it still exists, empty and inactive; a retry will report "written", not "created". Delete it with DeleteObject if you want a clean start.`;
+                }
+            }
             const unlockError = await attemptUnlock(objectUrl, lockHandle);
             const unlockNote = unlockError
                 ? `\nAdditionally, failed to release the lock.\nReason: ${unlockError}\nLock handle: ${lockHandle}. The object may now remain locked — retry with UnlockObject('${programName}') before the next attempt.`
@@ -505,16 +561,18 @@ async function writeProgramCore(args: any) {
                 } else {
                     lines.push(`Raw SAP ADT response omitted. Re-run with include_raw_sap_response=true to return it for diagnosis.`);
                 }
-                const splitterGuidance = getSourceSplitterGuidance(rawResponse);
+                const splitterGuidance = getSourceSplitterGuidance(rawResponse, sourceCode);
                 if (splitterGuidance) lines.push(splitterGuidance);
+                if (removedNote) lines.push(removedNote);
                 const tablesHint = getTablesStructureHint(rawResponse, sourceCode);
                 if (tablesHint) lines.push(tablesHint);
                 if (unlockNote) lines.push(unlockNote.trim());
                 return { isError: true, content: [{ type: 'text', text: lines.join('\n') }] };
             }
             const baseResult = return_error(error);
-            if (unlockNote && baseResult?.content?.[0]?.type === 'text') {
-                baseResult.content[0].text += unlockNote;
+            if (baseResult?.content?.[0]?.type === 'text') {
+                if (removedNote) baseResult.content[0].text += `\n${removedNote}`;
+                if (unlockNote) baseResult.content[0].text += unlockNote;
             }
             return baseResult;
         }
@@ -659,6 +717,7 @@ async function writeProgramCore(args: any) {
                         const convert = require('xml-js');
                         const parsed = convert.xml2js(actData, { compact: false }) as any;
                         const messages: string[] = [];
+                        const structured: ActivationMsg[] = [];
 
                         function extractMessages(node: any) {
                             if (!node) return;
@@ -681,6 +740,7 @@ async function writeProgramCore(args: any) {
                                     if (line && line !== '0') msg += ` Line ${line}`;
                                     msg += `: ${texts.join(' — ')}`;
                                     messages.push(msg);
+                                    structured.push({ type: msgType, object: objDescr, text: texts.join(' ') });
                                 }
                             }
                             if (node.elements) {
@@ -690,6 +750,11 @@ async function writeProgramCore(args: any) {
                             }
                         }
                         extractMessages(parsed);
+                        // SAP's `line` is unreliable ("Line 1"); say where the syntax check puts each message.
+                        try {
+                            const where = await locateActivationMessages(String(baseUrl), [{ name: programName, uri: objInfo!.uri }], structured);
+                            where.forEach((w, i) => { if (w) messages[i] += w; });
+                        } catch { /* best effort */ }
 
                         if (messages.length > 0) {
                             activationResult = `\n\nActivation FAILED with errors:\n${messages.join('\n')}`;
@@ -729,6 +794,7 @@ async function writeProgramCore(args: any) {
         if (effectiveTransportNumber) lines.push(`Transport: ${effectiveTransportNumber}${!transportNumber && transportDescription && !reusedExistingTransportNote ? ' (auto-created)' : ''}`);
         if (autoCreatedTaskNumber) lines.push(`Task: ${autoCreatedTaskNumber}`);
         if (reusedExistingTransportNote) lines.push(reusedExistingTransportNote);
+        if (snapshotNote) lines.push(snapshotNote);
         lines.push(sourceDiagnostics);
         if (patchSummary) lines.push(patchSummary);
         if (syntaxNote) lines.push(syntaxNote.trim());
@@ -812,9 +878,15 @@ function getTablesStructureHint(errorText: string, sourceCode: string): string |
     return `HINT: ADT inline FM signatures reject 'TABLES <param> STRUCTURE <type>' ("declares no type"). Rewrite each TABLES parameter as 'LIKE <DDIC structure>' and retry.`;
 }
 
-function getSourceSplitterGuidance(rawResponse: string): string | null {
+function getSourceSplitterGuidance(rawResponse: string, sourceCode = ''): string | null {
     if (!/OO_SOURCE_BASED/i.test(rawResponse)) return null;
     if (/T100KEY[-:]?NO(?:[^0-9]{0,80})0*11\b/i.test(rawResponse) || /can't be separated into its different source parts/i.test(rawResponse)) {
+        // The commonest cause by far: a local class (typically the unit test) pasted into the global
+        // class source. Those belong to separate class includes, not to the main source.
+        const classDefs = (sourceCode.match(/^\s*CLASS\s+\S+\s+DEFINITION\b/gim) || []).length;
+        if (classDefs > 1 || /\bFOR\s+TESTING\b/i.test(sourceCode)) {
+            return `SOURCE SPLITTER ERROR (OO_SOURCE_BASED011): the source holds more than the one global class ${classDefs > 1 ? `(${classDefs} CLASS … DEFINITION blocks)` : '(a FOR TESTING class)'}. Local classes, local types and unit tests do not belong in the class's main source — they live in separate class includes. Write the global class alone, then the local part with WriteProgram class_include=testclasses (unit tests) / implementations (local classes) / definitions (local types) / macros.`;
+        }
         return `SOURCE SPLITTER ERROR (OO_SOURCE_BASED011): SAP could not separate the class into definition sections or method implementations before syntax checking. Check CLASS-METHODS section order (IMPORTING, EXPORTING, CHANGING, RETURNING) and bisect the class definition before changing CTS state.`;
     }
     if (/T100KEY[-:]?NO(?:[^0-9]{0,80})0*12\b/i.test(rawResponse) || /unknown comments.*can't be stored/i.test(rawResponse)) {
@@ -1028,7 +1100,7 @@ function directObjectInfo(objectType: string, name: string, functionGroup?: stri
     }
     const typeDef = CREATION_TYPES[objectType];
     if (!typeDef) return null;
-    const typeLabel = objectType === 'INCL' ? 'include' : objectType === 'CLAS' ? 'class' : 'program';
+    const typeLabel = objectType === 'INCL' ? 'include' : objectType === 'CLAS' ? 'class' : objectType === 'INTF' ? 'interface' : 'program';
     return {
         uri: `/sap/bc/adt/${typeDef.creationPath}/${name}`,
         type: typeDef.typeId,
@@ -1081,6 +1153,7 @@ async function resolveObjectInfo(baseUrl: string, objectName: string): Promise<O
                 const typeLabel = type === 'PROG/I' ? 'include'
                     : type === 'FUGR/FF' ? 'function module'
                     : type === 'CLAS/OC' ? 'class'
+                    : type === 'INTF/OI' ? 'interface'
                     : 'program';
                 return { uri, type, name, typeLabel };
             }

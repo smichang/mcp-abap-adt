@@ -63,7 +63,39 @@ async function attemptUnlock(objectUrl: string, lockHandle: string): Promise<str
     }
 }
 
+const MAX_BATCH_DELETE = 20;
+
+// object_names[]: delete several objects in one call (the lifecycle test needed one call per object —
+// six for a program with five includes). Sequential, in the order given — each delete takes the stateful
+// gate on its own, and a program must go BEFORE the includes it includes (SAP keeps an include that a
+// program still includes). A failure does not stop the rest; the answer lists every object.
 export async function handleDeleteObject(args: any) {
+    if (args?.object_names === undefined) return deleteOne(args);
+    try {
+        if (args?.object_name) throw new McpError(ErrorCode.InvalidParams, 'pass either object_name or object_names, not both');
+        const raw = Array.isArray(args.object_names) ? args.object_names : [];
+        if (raw.length === 0) throw new McpError(ErrorCode.InvalidParams, 'object_names must be a non-empty array of names (or { object_name, object_type })');
+        if (raw.length > MAX_BATCH_DELETE) throw new McpError(ErrorCode.InvalidParams, `object_names has ${raw.length} entries; the maximum is ${MAX_BATCH_DELETE} per call`);
+        const lines: string[] = [];
+        let failed = 0;
+        for (const entry of raw) {
+            const e = typeof entry === 'string' ? { object_name: entry } : (entry ?? {});
+            const name = String(e.object_name ?? '').toUpperCase();
+            if (!name) { failed++; lines.push('? : skipped — an entry has no object_name'); continue; }
+            const res = await deleteOne({ object_name: name, object_type: e.object_type ?? args.object_type, transport_number: e.transport_number ?? args.transport_number });
+            const first = (res.content?.[0]?.text ?? '').split('\n').find((l: string) => l.trim()) ?? '';
+            const detail = res.isError ? (res.content?.[0]?.text ?? '').split('\n').filter((l: string) => l.trim()).slice(0, 3).join(' | ') : first;
+            if (res.isError) failed++;
+            lines.push(`${res.isError ? '✗' : '✓'} ${name}: ${detail}`);
+        }
+        lines.unshift(`Deleted ${raw.length - failed} of ${raw.length} object(s)${failed ? ` — ${failed} failed` : ''}:`);
+        return { isError: failed > 0, content: [{ type: 'text', text: lines.join('\n') }] };
+    } catch (error) {
+        return return_error(error);
+    }
+}
+
+async function deleteOne(args: any) {
     const objectName = args?.object_name ? String(args.object_name).toUpperCase() : '';
     const gate = acquireStatefulOperationLock(`DeleteObject(${objectName || 'unknown'})`);
     if (!gate.ok) return { isError: true, content: [{ type: 'text', text: gate.message }] };
@@ -212,8 +244,10 @@ export async function handleDeleteObject(args: any) {
 
         const lines = [`Deleted ${resolved.type} '${objectName}'.`];
         if (unlockError) lines.push(`Note: releasing the lock afterwards failed (${unlockError}) — an SM12 entry may remain for '${objectName}' until the session times out.`);
-        if (effectiveTransport) lines.push(`Recorded in transport ${effectiveTransport}.`);
-        lines.push(`The object may still appear in that transport's object list as the deletion record — this is normal CTS behavior, not a failed delete.`);
+        if (effectiveTransport) {
+            lines.push(`Recorded in transport ${effectiveTransport}.`);
+            lines.push(`The object may still appear in that transport's object list as the deletion record — this is normal CTS behavior, not a failed delete.`);
+        }
         return { isError: false, content: [{ type: 'text', text: lines.join('\n') }] };
     } catch (error) {
         return return_error(error);

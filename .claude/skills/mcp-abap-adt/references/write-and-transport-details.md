@@ -58,6 +58,20 @@ response reports it). `action=add_task` is only for a *second* developer on a sh
 - Create needs `description` + `package_name`; give the transport up front
   (`transport_description`, §1).
 - **Class:** the file holds the full `CLASS … DEFINITION … ENDCLASS.` + `IMPLEMENTATION`.
+- **Patch mode:** to change part of an existing object send `edits=[{old_string,new_string,replace_all?}]`
+  instead of the whole source (unique exact anchor, atomic, max 20, existing objects only). A passing
+  `check_only` dry run prints `apply_patch="p-…"`; apply it with `WriteProgram(program_name, apply_patch=…)`
+  without resending the edits. Every write keeps the replaced text as a local snapshot
+  (`Previous source kept as local snapshot <id>`); diff or recover it with
+  `GetCode(resource=VERSION, compare_to=snapshot:<id>)` — the only history a `$TMP` object has.
+- **Class unit tests and other local parts are not part of the main source.** Write the global class
+  with `WriteProgram`, then `WriteProgram(program_name=<class>, class_include=testclasses, source_code=…)`
+  (also `implementations` = local classes, `definitions` = local types, `macros`), then `RunUnitTest`.
+  The include is created on the first write and the class activated; patch it later with
+  `class_include` + `edits[]`. Pasting `CLASS ltc_… FOR TESTING` into the main source fails in the
+  source splitter (`OO_SOURCE_BASED011`). The class is syntax-checked with the new include before the
+  lock (errors in that include refuse the write; `check_only=true` dry-runs, `syntax_check=false` opts
+  out); the first write of a new include cannot be pre-checked and says `NOT CHECKED`.
   A new class starts as `PUBLIC CREATE PRIVATE` with empty sections; visibility, `FINAL`,
   `ABSTRACT`, `CREATE …` live in the `DEFINITION` text, so write the header you want on the
   first call. Text elements are not supported for classes (PROG/P only).

@@ -28,6 +28,16 @@ export function cacheKey(tool: string, parts: Record<string, string | number | u
     return `${tool}::${JSON.stringify(sorted)}`;
 }
 
+/**
+ * Forgets every cached list. Called when a request that may CHANGE the system goes out: a list read
+ * right after a write must not come back stale (found 2026-10-15: after ManageDynpro delete,
+ * GetCode DYNPRO still listed the deleted screen, marked [cached]). The short TTL alone is not
+ * enough inside one session, where the caller has just made the change itself.
+ */
+export function clearQueryCache(): void {
+    store.clear();
+}
+
 /** Returns the cached list, or undefined on a miss/expiry (expired entries are evicted). */
 export function getCachedList<T>(key: string): T[] | undefined {
     const entry = store.get(key);

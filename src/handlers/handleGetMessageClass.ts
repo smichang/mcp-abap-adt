@@ -129,15 +129,25 @@ export async function handleGetMessageClass(args: any) {
                 lines.push(`Last Changed: ${dateStr} by ${changedBy}`);
             }
             lines.push('');
-            lines.push(`Messages (${messages.length} total):`);
+            // Paged like every other list tool: class 00 has 927 messages (~35 KB) and a custom class can be
+            // as big — the whole list went to the caller's context on every read.
+            const offset = Number.isFinite(Number(args?.offset)) && Number(args.offset) > 0 ? Math.floor(Number(args.offset)) : 0;
+            const limit = Number.isFinite(Number(args?.max_results)) && Number(args.max_results) > 0 ? Math.floor(Number(args.max_results)) : 200;
+            const window = messages.slice(offset, offset + limit);
+            lines.push(window.length < messages.length
+                ? `Messages (${messages.length} total, showing ${window.length} from offset ${offset}):`
+                : `Messages (${messages.length} total):`);
 
-            for (const msg of messages) {
+            for (const msg of window) {
                 const mAttrs = msg._attributes || {};
                 const msgno = getAttr(mAttrs, 'msgno');
                 const msgtext = getAttr(mAttrs, 'msgtext');
                 if (msgno !== undefined) {
                     lines.push(`  ${msgno} | ${msgtext || '(no text)'}`);
                 }
+            }
+            if (offset + limit < messages.length) {
+                lines.push(`… ${messages.length - offset - limit} more — next page: offset=${offset + limit} (max_results=${limit}).`);
             }
 
             return {

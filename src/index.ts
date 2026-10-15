@@ -26,6 +26,8 @@ import { handleActivateObjects } from './handlers/handleActivateObjects';
 import { handleRunATCCheck } from './handlers/handleRunATCCheck';
 import { handleRunUnitTest } from './handlers/handleRunUnitTest';
 import { handleUnlockObject } from './handlers/handleUnlockObject';
+import { handleRunABAP } from './handlers/handleRunABAP';
+import { handleManagePackage } from './handlers/handleManagePackage';
 import { handleManageSessions } from './handlers/handleManageSessions';
 import { handleDeleteObject } from './handlers/handleDeleteObject';
 import { handleTextPoolLang } from './handlers/handleTextPoolLang';
@@ -137,13 +139,13 @@ export class mcp_abap_adt_server {
         tools: [ // Define available tools
           {
             name: 'GetCode',
-            description: 'Unified getter for ABAP source-related information, selected via the "resource" param. resource=OBJECT: unified getter for source-bearing objects — auto-detects the kind (program, class, interface, include, table, structure, function group, function module, data element, domain, CDS view) via search and returns the source (object_name required; optional kind hint PROG|CLAS|INTF|INCL|TABL|STRU|VIEW|FUGR|FUNC|DTEL|DOMA|CDS; optional function_group when kind=FUNC). resource=VERSION: version history, source retrieval, and version compare (object_name + object_type required; no version/compare_to lists all saved versions; with version returns source at that version; with compare_to returns a unified diff from compare_to (baseline) to version (target, defaults to active); for a class, list mode shows every include (main/local classes/test classes…) and class_include picks the include for version/compare_to). resource=ENHANCEMENTS: retrieve ABAP enhancements attached to an object, or scan a function group\'s includes (object_name required; optional with_source default true, scan_all default false, max_includes default 100 for function groups). resource=WHEREUSED: find all references to an object across the system (object_name + object_type required; optional max_results default 100, offset for paging — full list cached in-memory for a few minutes). resource=DYNPRO: classic SAP GUI screens (Dynpro) of a program — object_name = the program (for a function group use SAPL<group>); without dynnr lists its screens (number, type, description; max_results/offset paging); with dynnr returns that screen\'s attributes, elements and flow logic (raw=true returns the complete round-trippable JSON definition instead — large, consider output_file).',
+            description: 'Unified getter for ABAP source-related information, selected via the "resource" param. resource=OBJECT: unified getter for source-bearing objects — auto-detects the kind (program, class, interface, include, table, structure, function group, function module, data element, domain, CDS view) via search and returns the source (object_name required; optional kind hint PROG|CLAS|INTF|INCL|TABL|STRU|VIEW|FUGR|FUNC|DTEL|DOMA|CDS; optional function_group when kind=FUNC). resource=VERSION: version history, source retrieval, and version compare (object_name + object_type required; no version/compare_to lists all saved versions; with version returns source at that version; with compare_to returns a unified diff from compare_to (baseline) to version (target, defaults to active); for a class, list mode shows every include (main/local classes/test classes…) and class_include picks the include for version/compare_to; local objects keep one SAP version, so the pre-write snapshots WriteProgram keeps are listed and usable as version=snapshot:<id>|snapshot:latest or compare_to=snapshot:<id>). resource=ENHANCEMENTS: retrieve ABAP enhancements attached to an object, or scan a function group\'s includes (object_name required; optional with_source default true, scan_all default false, max_includes default 100 for function groups). resource=WHEREUSED: find all references to an object across the system (object_name + object_type required; optional max_results default 100, offset for paging — full list cached in-memory for a few minutes). resource=SYNTAX: ADT syntax check of an EXISTING object\'s current source (inactive working version if there is one) — object_name required, optional object_type, max_messages default 20; read-only, nothing locked or written; returns E/W with line:col (use WriteProgram check_only to check NEW source instead; an include is checked without its master program). resource=DYNPRO: classic SAP GUI screens (Dynpro) of a program — object_name = the program (for a function group use SAPL<group>); without dynnr lists its screens (number, type, description; max_results/offset paging); with dynnr returns that screen\'s attributes, elements and flow logic (raw=true returns the complete round-trippable JSON definition instead — large, consider output_file).',
             inputSchema: {
               type: 'object',
               properties: {
                 resource: {
                   type: 'string',
-                  enum: ['OBJECT', 'VERSION', 'ENHANCEMENTS', 'WHEREUSED', 'DYNPRO'],
+                  enum: ['OBJECT', 'VERSION', 'ENHANCEMENTS', 'WHEREUSED', 'DYNPRO', 'SYNTAX'],
                   description: 'Which getter to invoke. See tool description for the fields each one uses.'
                 },
                 object_name: {
@@ -165,6 +167,10 @@ export class mcp_abap_adt_server {
                   type: 'string',
                   description: 'OBJECT only. Optional explicit kind hint to skip auto-detect. Values: PROG, CLAS, INTF, INCL, TABL, STRU, VIEW, FUGR, FUNC, DTEL, DOMA, CDS'
                 },
+                text_elements: {
+                  description: 'OBJECT only, programs (PROG/P). true (default): the source followed by its text symbols, selection texts and list headings as "* ─── … ───" comment blocks appended. false: the source ONLY — clean text to patch, diff or write back. "only": just the text elements, as the bare blocks WriteProgram takes in text_symbols / selection_texts / list_headings (use with false to clone a program in two reads).',
+                  oneOf: [{ type: 'boolean' }, { type: 'string', enum: ['only'] }]
+                },
                 function_group: {
                   type: 'string',
                   description: 'OBJECT only, and only relevant when kind=FUNC. The function group containing the function module. If omitted, it is auto-resolved via search — a function module\'s package (DEVCLASS) is NOT its function group, so only pass this when you already know the exact group.'
@@ -180,7 +186,7 @@ export class mcp_abap_adt_server {
                 class_include: {
                   type: 'string',
                   enum: ['main', 'definitions', 'implementations', 'macros', 'testclasses'],
-                  description: 'VERSION only, object_type=CLAS. Which part of the class: main (global class, default), definitions (local types), implementations (local classes), macros, testclasses (local test classes). A class keeps one history per part. Without version/compare_to and without class_include, every part\'s history is listed.'
+                  description: 'VERSION (object_type=CLAS) and OBJECT (a class): which part of the class: main (global class, default), definitions (local types), implementations (local classes), macros, testclasses (local test classes). With resource=OBJECT, a value other than main returns the source of that local include as stored (the read twin of WriteProgram class_include). For VERSION a class keeps one history per part. Without version/compare_to and without class_include, every part\'s history is listed.'
                 },
                 compare_to: {
                   type: 'string',
@@ -400,11 +406,11 @@ export class mcp_abap_adt_server {
                 },
                 max_results: {
                   type: 'number',
-                  description: 'PACKAGE or TRANSPORT list mode. Maximum number of objects/transports to list (default 200 for PACKAGE, 100 for TRANSPORT). Output flags when truncated.'
+                  description: 'PACKAGE, TRANSPORT or MESSAGE_CLASS list mode. Maximum number of objects/transports/messages to list (default 200 for PACKAGE and MESSAGE_CLASS, 100 for TRANSPORT). Output flags when truncated.'
                 },
                 offset: {
                   type: 'number',
-                  description: 'PACKAGE or TRANSPORT list mode. Optional. Number of entries to skip before applying max_results, for paging. Served from the short-lived in-memory cache (~3 min) when possible — no repeat SAP call.',
+                  description: 'PACKAGE, TRANSPORT or MESSAGE_CLASS list mode. Optional. Number of entries to skip before applying max_results, for paging. Served from the short-lived in-memory cache (~3 min) when possible — no repeat SAP call.',
                   default: 0
                 },
                 ...backgroundSchemaProps
@@ -560,7 +566,7 @@ export class mcp_abap_adt_server {
           },
           {
             name: 'WriteProgram',
-            description: 'Write (overwrite) ABAP source code for programs, includes, classes, or function modules. Auto-detects object type. If the object does not exist, it can be created by providing description and package_name. Can also create an empty function group (object_type=FUGR) — a container only, no source is written (provide description + package_name, omit source_code/source_file).',
+            description: 'MODES — pick ONE way to give the source: (1) source_code | source_file = full write (creates the object when description + package_name are given); (2) edits[] = patch an EXISTING object (cheapest for any change to a large object); (3) apply_patch=<id> = apply the edits of an earlier PASSED dry run (edits + check_only=true prints the id); (4) class_include=testclasses|implementations|definitions|macros = write the LOCAL part of a class (unit tests live in testclasses) — combine with (1), (2) or (3). check_only=true reports the syntax check and writes nothing. DEFAULTS: activate=true; syntax_check is OFF for a main-source write but ON for class_include. Write (overwrite) ABAP source code for programs, includes, classes, or function modules. Auto-detects object type. If the object does not exist, it can be created by providing description and package_name. Can also create an empty function group (object_type=FUGR) — a container only, no source is written (provide description + package_name, omit source_code/source_file).',
             inputSchema: {
               type: 'object',
               properties: {
@@ -619,6 +625,15 @@ export class mcp_abap_adt_server {
                   description: 'Whether to activate after writing. Default: true',
                   default: true
                 },
+                class_include: {
+                  type: 'string',
+                  enum: ['testclasses', 'implementations', 'definitions', 'macros'],
+                  description: 'Optional. Write one of an EXISTING class\'s LOCAL includes instead of its main source: testclasses (local unit-test classes), implementations (local classes), definitions (local types), macros. program_name is the class. Pass exactly one of source_code, source_file or edits (a patch of that include as it is in SAP now); the include is created if it does not exist yet. Local classes/tests must NOT be put into the class\'s main source — SAP\'s source splitter rejects that (OO_SOURCE_BASED011). activate defaults to true (activates the class). The class is syntax-checked with the new include text in place BEFORE the lock (on by default; syntax_check=false opts out; check_only=true only reports) — errors in THIS include refuse the write, errors elsewhere in the class are listed but do not block.'
+                },
+                apply_patch: {
+                  type: 'string',
+                  description: 'Optional. A patch id returned by an earlier edits[] + check_only=true dry run that passed ("To apply this exact patch: … apply_patch=p-xxxx"): re-use those edits instead of sending them again. Same program_name required; mutually exclusive with edits/source_code/source_file. The edits are re-applied to the CURRENT source (same fail-fast and re-read-in-lock safety as a direct edits[] call). Works for the main source of a class and, together with class_include, for that local include (an id is bound to one class AND one include). Valid 15 minutes, in memory — unknown after a server restart, then send the edits again.'
+                },
                 edits: {
                   type: 'array',
                   description: 'PATCH MODE — change part of an existing object without sending its whole source (use instead of source_code/source_file; cannot be combined with them; the object must already exist). Each entry is { old_string, new_string, replace_all? }: old_string must match the CURRENT SAP source exactly (case, indentation, spaces) and occur exactly once unless replace_all=true; new_string replaces it ("" deletes). Edits apply in order, each to the result of the previous one; if ANY edit fails, nothing is locked or written and the error names the edit, and — when the text exists with other whitespace/case — shows the exact lines to copy. The source is read from SAP (the inactive working version if one exists), re-read after the lock, and edits are re-applied if it changed in between. Syntax check, transport guard, text elements and activation behave as for a full write; check_only=true + edits is a dry run. Max 20 edits. Prefer this over source_code for any change to a large object.',
@@ -653,7 +668,7 @@ export class mcp_abap_adt_server {
                 },
                 object_type: {
                   type: 'string',
-                  description: 'Optional. Type of object to create: PROG (program, default), INCL (include), CLAS (class — the full `CLASS ... DEFINITION ... IMPLEMENTATION ... ENDCLASS.` source, including visibility/final/abstract, goes in source_code/source_file; SAP defaults a brand-new class to PUBLIC CREATE PRIVATE until overwritten by the header you supply), FUGR (function group container — no source written; SAP generates the TOP/UXX includes), or FUNC (function module — requires function_group; the FM signature comes from the inline FUNCTION header in the source). Only used when creating a new object.',
+                  description: 'Optional. Type of object to create: PROG (program, default), INCL (include), INTF (interface — the full `INTERFACE … PUBLIC. … ENDINTERFACE.` source), CLAS (class — the full `CLASS ... DEFINITION ... IMPLEMENTATION ... ENDCLASS.` source, including visibility/final/abstract, goes in source_code/source_file; SAP defaults a brand-new class to PUBLIC CREATE PRIVATE until overwritten by the header you supply), FUGR (function group container — no source written; SAP generates the TOP/UXX includes), or FUNC (function module — requires function_group; the FM signature comes from the inline FUNCTION header in the source). Only used when creating a new object.',
                   default: 'PROG'
                 },
                 function_group: {
@@ -786,6 +801,42 @@ export class mcp_abap_adt_server {
             }
           },
           {
+            name: 'RunABAP',
+            description: 'Execute ABAP server-side and return its console output. CLAS: runs a class implementing IF_OO_ADT_CLASSRUN (method MAIN, output via out->write). PROG: runs an executable report with selection-screen defaults and returns its WRITE list — it may change data, so it requires confirm_side_effects=true after you have read the source. A CLASS in a local ($) package runs without confirmation; a class anywhere else (transportable, SAP standard) needs confirm_side_effects=true too. The object must exist (a typo is an error, not an empty run). Includes are refused. Output is capped by max_chars. For ABAP Unit use RunUnitTest.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                object_name: { type: 'string', description: 'Class or program name. Example: ZCL_MCP_DEMO_RUN' },
+                object_type: { type: 'string', description: 'Optional CLAS or PROG; disambiguates a name that exists as both.' },
+                confirm_side_effects: { type: 'boolean', description: 'Required true for a PROG, and for a CLAS outside a local ($) package: you acknowledge it really executes and may write to the database.' },
+                max_chars: { type: 'integer', description: 'Output cap in characters (default 20000).' }
+              },
+              required: ['object_name']
+            }
+          },
+          {
+            name: 'ManagePackage',
+            description: 'Create or update an ABAP package (DEVC) over the native ADT package contract. action=create: package_name, description (<=60), software_component (default LOCAL for $ packages), transport_number (required unless $), optional super_package, responsible (default: the connection user), package_type (development|structure|main), transport_layer, application_component, record_changes. action=update: changes only the fields you pass (description, software_component, transport_layer, application_component, super_package) via lock -> PUT -> unlock; refuses to move the package into a different request. Delete a package with DeleteObject.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                action: { type: 'string', enum: ['create', 'update'] },
+                package_name: { type: 'string', description: 'Z*/Y*/$*/namespaced, max 30 chars.' },
+                description: { type: 'string' },
+                software_component: { type: 'string' },
+                transport_layer: { type: 'string' },
+                application_component: { type: 'string' },
+                super_package: { type: 'string' },
+                package_type: { type: 'string', enum: ['development', 'structure', 'main'] },
+                master_language: { type: 'string', description: 'Default EN.' },
+                responsible: { type: 'string' },
+                record_changes: { type: 'boolean' },
+                transport_number: { type: 'string', description: 'Change request for a transportable package.' }
+              },
+              required: ['action', 'package_name']
+            }
+          },
+          {
             name: 'UnlockObject',
             description: 'Recover from a stuck ADT edit lock (e.g. activation or WriteProgram failing with "User X is currently editing Y"). Attempts to acquire the lock and, if successful, immediately releases it — clearing a stray/reclaimable lock (typically left behind by an interrupted WriteProgram call, or a session that already timed out). If the lock cannot be acquired, the object is genuinely held by an active session: nothing is changed, and the response tells you whether the holder is your own configured SAP user (likely a leftover SAP GUI/ADT session — close it) or a different user (coordinate with them, or escalate to SAP Basis/SM12). Never force-unlocks another user\'s lock; with force=true it deletes your own user\'s orphan SM12 entry for the object.',
             inputSchema: {
@@ -830,6 +881,12 @@ export class mcp_abap_adt_server {
                   type: 'string',
                   description: 'Name of the ABAP object to delete (program, include, function module, class, interface, ...). Example: ZBP_JOB_CREATE_V2'
                 },
+                object_names: {
+                  type: 'array',
+                  items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { object_name: { type: 'string' }, object_type: { type: 'string' }, transport_number: { type: 'string' } }, required: ['object_name'] }] },
+                  maxItems: 20,
+                  description: 'Optional, instead of object_name: delete several objects in ONE call (names, or { object_name, object_type?, transport_number? }; max 20). Deleted one after another IN THE ORDER GIVEN — list a program BEFORE the includes it includes, a package LAST. A failure does not stop the rest; the answer lists every object with ✓/✗. object_type / transport_number at the top level apply to every entry that does not set its own.'
+                },
                 object_type: {
                   type: 'string',
                   description: 'Optional. Disambiguates objects that share a name (e.g. RSPARAM is both a program and a structure): a type group such as PROG, CLAS, INTF, FUGR, TABL, or an exact ADT subtype such as PROG/P, TABL/DS, FUGR/FF. Without it an ambiguous name is refused and the candidates are listed — nothing is locked or deleted.'
@@ -839,7 +896,7 @@ export class mcp_abap_adt_server {
                   description: 'Optional. Transport request number to record the deletion under. If the object is already locked in an open transport, you MUST use that transport (or omit this) — supplying a different one is refused to prevent silent reassignment.'
                 }
               },
-              required: ['object_name']
+              required: []
             }
           },
           {
@@ -971,7 +1028,7 @@ export class mcp_abap_adt_server {
           },
           {
             name: 'RunATCCheck',
-            description: 'Run an ABAP Test Cockpit (ATC) code-quality check against one or more transport requests and return the findings (errors/warnings/notes with location and message). Each transport is validated to exist before running — a nonexistent transport is reported as missing rather than silently returning 0 findings. By default, findings are scoped to the transport\'s own objects (scope="transport") — ATC checks the whole compilation unit (e.g. an entire function group for one changed FM), so unfiltered results can bury a small delta under hundreds of pre-existing findings on untouched sibling objects. For MCP clients with a short request timeout, set background=true to return instantly and have the findings written to a file.',
+            description: 'Run an ABAP Test Cockpit (ATC) code-quality check and return the findings (errors/warnings/notes with location and message). Pass EXACTLY ONE target: transport_numbers (one or more transport requests), objects (object or PACKAGE names — a package checks everything inside it; up to 20), or worklist_id (re-read an earlier run\'s findings with no new ATC run — use it to page large results). Every report states its worklist id and pages with offset/limit (default 200 findings; the footer gives the exact next call). Each transport is validated to exist before running — a nonexistent transport is reported as missing rather than silently returning 0 findings. By default, findings are scoped to the transport\'s own objects (scope="transport") — ATC checks the whole compilation unit (e.g. an entire function group for one changed FM), so unfiltered results can bury a small delta under hundreds of pre-existing findings on untouched sibling objects. For MCP clients with a short request timeout, set background=true to return instantly and have the findings written to a file.',
             inputSchema: {
               type: 'object',
               properties: {
@@ -980,6 +1037,17 @@ export class mcp_abap_adt_server {
                   items: { type: 'string' },
                   description: 'One or more transport request numbers to scan, e.g. ["DEVK900123", "DEVK900123"]. All objects across all listed transports are checked in a single ATC run.'
                 },
+                objects: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'Object or package names to check instead of transports, e.g. ["ZCL_FOO", "ZMCP"]. Each name is resolved first (an unknown or ambiguous name is reported, not silently dropped); a package covers all objects inside. No transport scoping applies. Max 20.'
+                },
+                worklist_id: {
+                  type: 'string',
+                  description: 'Optional. A worklist id from an earlier report: fetch its findings again (offset/limit paging) without running ATC again.'
+                },
+                offset: { type: 'integer', description: 'Optional. Skip this many findings (ordered errors, warnings, notes across all objects). Default 0.' },
+                limit: { type: 'integer', description: 'Optional. Findings to show per call. Default 200.' },
                 check_variant: {
                   type: 'string',
                   description: 'Optional. ATC check variant to use. Defaults to the system\'s configured default check variant (from /sap/bc/adt/atc/customizing). Note: SAP silently falls back to the default variant if an invalid name is given here — no error is raised.'
@@ -990,6 +1058,10 @@ export class mcp_abap_adt_server {
                   default: 'transport',
                   description: 'Optional. "transport" (default): only report findings that land on objects actually registered in the given transport(s) — suppresses pre-existing findings on untouched sibling objects that ATC checks as part of the same compilation unit (e.g. other function modules in the same group). "full": report everything ATC returns, unfiltered. Falls back to unfiltered automatically if the transport\'s object list can\'t be resolved.'
                 },
+                fail_on_error: {
+                  type: 'boolean',
+                  description: 'Optional, default false. By default a completed run is a successful call even when it finds priority-1 (error) findings — read the "Verdict: PASS/FAIL" line. Set true for scripts/CI that gate on isError: the call is then ALSO returned as an error when the run has priority-1 findings.'
+                },
                 background: {
                   type: 'boolean',
                   description: 'Optional. When true, the tool returns immediately (in well under a second, before any SAP call) with the target file path, and writes the findings to that file when the run completes. Use this from MCP clients with a short request timeout (e.g. Cline). Read output_file a few seconds later for the results. Default: false (synchronous — returns the full report inline).',
@@ -997,10 +1069,10 @@ export class mcp_abap_adt_server {
                 },
                 output_file: {
                   type: 'string',
-                  description: 'Optional. Path to write the findings report to. Relative paths resolve against the server working directory; the absolute path is reported back. Required target for background mode (a timestamped file in the working directory is used if omitted). In synchronous mode, when set, the report is both returned inline and written to this file.'
+                  description: 'Optional. Path to write the findings report to. Relative paths resolve against the server working directory; the absolute path is reported back. Required target for background mode (a timestamped file in the working directory is used if omitted). In synchronous mode, when set, the report is written to this file and also returned inline — unless it exceeds 20000 characters, then only its first 30 lines plus the path, size and line count come back.'
                 }
               },
-              required: ['transport_numbers']
+              required: []
             }
           },
           {
@@ -1063,6 +1135,10 @@ export class mcp_abap_adt_server {
           return await handleRunUnitTest(request.params.arguments);
         case 'ManageSessions':
           return await handleManageSessions(request.params.arguments);
+        case 'RunABAP':
+          return await handleRunABAP(request.params.arguments);
+        case 'ManagePackage':
+          return await handleManagePackage(request.params.arguments);
         case 'UnlockObject':
           return await handleUnlockObject(request.params.arguments);
         case 'DeleteObject':

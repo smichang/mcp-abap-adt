@@ -8,6 +8,12 @@ export interface McpTextResult {
     content: { type: string; text: string }[];
 }
 
+// Above this many characters a result written to output_file is NOT also returned in full.
+// Env OUTPUT_FILE_INLINE_LIMIT overrides (0 = never return inline once written).
+const INLINE_LIMIT = Number.isFinite(Number(process.env.OUTPUT_FILE_INLINE_LIMIT)) && process.env.OUTPUT_FILE_INLINE_LIMIT !== undefined
+    ? Number(process.env.OUTPUT_FILE_INLINE_LIMIT) : 20000;
+const HEAD_LINES = 30;
+
 /**
  * Wraps a handler "core" with optional background + output_file behavior, driven by
  * two conventional args any tool can accept:
@@ -40,7 +46,16 @@ export async function maybeBackground(
         if (outputFileArg) {
             const outPath = resolveOutPath(outputFileArg, slug);
             const text = res.content?.[0]?.text ?? '';
-            await fs.writeFile(outPath, text, 'utf8').catch(() => { /* non-fatal */ });
+            const written = await fs.writeFile(outPath, text, 'utf8').then(() => true, () => false);
+            // A big result returned inline as well as written defeats output_file: a 120 KB include
+            // overflowed the caller's token limit although the file was fine. Past the limit return
+            // a head + the path/size/line count; the file has everything (grep it or read in chunks).
+            if (written && text.length > INLINE_LIMIT) {
+                const allLines = text.split('\n');
+                const head = allLines.slice(0, HEAD_LINES).join('\n');
+                const note = `… ${allLines.length - HEAD_LINES} more line(s) not shown. Full result: ${outPath} (${text.length} chars, ${allLines.length} lines) — read it in chunks or grep it. Results up to ${INLINE_LIMIT} chars are also returned inline.`;
+                return { isError: res.isError, content: [{ type: 'text', text: `${head}\n${note}` }] };
+            }
             return { isError: res.isError, content: [{ type: 'text', text: `${text}\n\n(written to ${outPath})` }] };
         }
         return res;
@@ -90,6 +105,6 @@ export const backgroundSchemaProps = {
     },
     output_file: {
         type: 'string' as const,
-        description: 'Optional. Path to write the result to. Relative paths resolve against the server working directory; the absolute path is reported back. Target for background mode (a timestamped file is used if omitted). In synchronous mode, when set, the result is both returned inline and written to this file.'
+        description: 'Optional. Path to write the result to. Relative paths resolve against the server working directory; the absolute path is reported back. Target for background mode (a timestamped file is used if omitted). In synchronous mode, when set, the result is written to this file and also returned inline — unless it exceeds 20000 characters, in which case only the first 30 lines plus the path, size and line count come back (read or grep the file for the rest).'
     }
 };

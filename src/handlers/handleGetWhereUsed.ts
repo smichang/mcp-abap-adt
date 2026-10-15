@@ -4,13 +4,32 @@ import { AxiosError } from 'axios';
 import { maybeBackground } from '../lib/background';
 import { cacheKey, getCachedList, setCachedList } from '../lib/queryCache';
 
+const SYNC_TIMEOUT_MS = 60000;          // what a synchronous call waits for SAP
+const BACKGROUND_TIMEOUT_MS = 600000;   // a background run may take much longer (IF_MESSAGE: 47,828 usages)
+
 export async function handleGetWhereUsed(args: any) {
     const name = args?.object_name ? String(args.object_name).toUpperCase() : 'object';
     const slug = `whereused-${name}`;
-    return maybeBackground(args, `Where-used for ${name}`, slug, () => getWhereUsedCore(args));
+    const label = `Where-used for ${name}`;
+    // an explicit background run is not held to the synchronous 60 s
+    if (args?.background === true) return maybeBackground(args, label, slug, () => getWhereUsedCore(args, BACKGROUND_TIMEOUT_MS));
+
+    const res: any = await maybeBackground(args, label, slug, () => getWhereUsedCore(args, SYNC_TIMEOUT_MS));
+    // (maybeBackground rebuilds the result when output_file is set and drops the flag, so match the text too)
+    const timedOut = res?.timedOut === true || /^Where-used for '.*' timed out after \d+ s\./.test(String(res?.content?.[0]?.text ?? ''));
+    if (!timedOut) return res;
+    // The object is used too widely to answer within the synchronous window (a very common standard
+    // interface/class has tens of thousands of usages and failed at exactly 60 s). Don't just fail:
+    // run it again in the background with the long timeout and hand back where the result will be.
+    const started: any = await maybeBackground({ ...args, background: true }, label, slug, () => getWhereUsedCore(args, BACKGROUND_TIMEOUT_MS));
+    const where = started?.content?.[0]?.text ?? '';
+    return {
+        isError: false,
+        content: [{ type: 'text', text: `${label} did not finish within ${SYNC_TIMEOUT_MS / 1000} s — ${name} is used very widely. Continued automatically in the background (timeout ${BACKGROUND_TIMEOUT_MS / 60000} min):\n${where}\nOnce the file shows the list it is also cached, so repeated calls with another offset/max_results page without a new SAP query.` }]
+    };
 }
 
-async function getWhereUsedCore(args: any) {
+async function getWhereUsedCore(args: any, timeoutMs: number = SYNC_TIMEOUT_MS) {
     try {
         if (!args?.object_name) {
             throw new McpError(ErrorCode.InvalidParams, 'object_name is required');
@@ -57,7 +76,7 @@ async function getWhereUsedCore(args: any) {
                 '</usagereferences:usageReferenceRequest>';
 
             try {
-                const response = await makeAdtRequest(url, 'POST', 60000, body, undefined, {
+                const response = await makeAdtRequest(url, 'POST', timeoutMs, body, undefined, {
                     'Content-Type': 'application/*',
                     'Accept': 'application/*'
                 });
@@ -72,6 +91,11 @@ async function getWhereUsedCore(args: any) {
                             content: [{ type: 'text', text: `Where-used search failed for '${objectName}'.\nReason: ${errMsg}` }]
                         };
                     }
+                }
+                // a request that ran into our own timeout is not a failure of SAP — signal it so the
+                // caller can continue in the background instead of reporting an error
+                if (error instanceof AxiosError && (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT' || /timeout of \d+ms exceeded/i.test(error.message))) {
+                    return { isError: true, timedOut: true, content: [{ type: 'text', text: `Where-used for '${objectName}' timed out after ${timeoutMs / 1000} s.` }] } as any;
                 }
                 return return_error(error);
             }

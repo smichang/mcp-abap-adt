@@ -4,10 +4,11 @@ import { handleGetObjectVersion } from './handleGetObjectVersion';
 import { handleGetEnhancements } from './handleGetEnhancements';
 import { handleGetWhereUsed } from './handleGetWhereUsed';
 import { handleGetDynpro } from './handleGetDynpro';
+import { handleCheckSyntax } from './handleCheckSyntax';
 import { maybeBackground, resolveOutPath } from '../lib/background';
 import * as fs from 'fs/promises';
 
-const RESOURCES = ['OBJECT', 'VERSION', 'ENHANCEMENTS', 'WHEREUSED', 'DYNPRO'];
+const RESOURCES = ['OBJECT', 'VERSION', 'ENHANCEMENTS', 'WHEREUSED', 'DYNPRO', 'SYNTAX'];
 
 export async function handleGetCode(args: any) {
     try {
@@ -27,6 +28,8 @@ export async function handleGetCode(args: any) {
                 return await handleGetEnhancements(rest);
             case 'WHEREUSED':
                 return await handleGetWhereUsed(rest);
+            case 'SYNTAX':
+                return await handleCheckSyntax(rest);
             case 'DYNPRO':
                 // raw JSON is 35-50 KB per screen: with output_file it goes ONLY to the
                 // file (eval 2026-10-02: returning it inline as well overflowed a client)

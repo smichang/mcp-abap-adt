@@ -13,6 +13,20 @@ import { makeAdtRequest } from './utils';
 
 export type ResolveResult = { uri: string; type: string } | { error: string };
 
+// Short names the tool descriptions use (and people type) that are not ADT type prefixes: the
+// resolver compares against the quickSearch type (PROG/I, FUGR/FF, ...), so INCL silently matched
+// nothing and an include could only be found without a type. Expanded to the exact ADT subtype.
+const TYPE_ALIASES: Record<string, string> = {
+    INCL: 'PROG/I',
+    FUNC: 'FUGR/FF',
+    DTEL: 'DTEL/DE',
+    DOMA: 'DOMA/DD',
+    DDLS: 'DDLS/DF',
+    CDS: 'DDLS/DF',
+    STRU: 'TABL/DS',
+    STRUCTURE: 'TABL/DS',
+};
+
 export async function resolveAnyObject(baseUrl: string, name: string, objectType?: string): Promise<ResolveResult> {
     const url = `${baseUrl}/sap/bc/adt/repository/informationsystem/search?operation=quickSearch&query=${encodeURIComponent(name)}&maxResults=50`;
     const response = await makeAdtRequest(url, 'GET', 15000);
@@ -31,7 +45,8 @@ export async function resolveAnyObject(baseUrl: string, name: string, objectType
         return key ? String(attrs[key] || '') : '';
     };
 
-    const hint = objectType ? objectType.toUpperCase() : '';
+    const rawHint = objectType ? objectType.toUpperCase().trim() : '';
+    const hint = TYPE_ALIASES[rawHint] ?? rawHint;
     const matches: { uri: string; type: string }[] = [];
     for (const ref of refs) {
         const attrs = ref?._attributes || {};

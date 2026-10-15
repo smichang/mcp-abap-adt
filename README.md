@@ -14,10 +14,10 @@ This project exists for three goals:
    | Stage | Tools |
    |---|---|
    | Discover & read | `SearchObject`, `GetCode` (source, versions, enhancements, where-used, screens), `GetMeta` (packages, types, transactions, transports, message classes, DDIC, inactive objects), `DataPreview` |
-   | Create & change | `WriteProgram` (programs, includes, classes, function groups/modules, text elements), `ManageDDIC`, `ManageMessageClass`, `ManageDynpro`, `ManageAuthObject`, `TextPoolLang` |
+   | Create & change | `WriteProgram` (programs, includes, classes and their local test/definition includes, interfaces, function groups/modules, text elements; patch mode via `edits[]`), `ManageDDIC`, `ManageMessageClass`, `ManageDynpro`, `ManageAuthObject`, `ManagePackage`, `TextPoolLang` |
    | Transport | `ManageTransport` (create, rename, assign, move, merge, release, delete) |
    | Activate | `ActivateObjects` (mass activation, RFC toggle) |
-   | Test & quality | `RunUnitTest`, `RunATCCheck` |
+   | Test & quality | `RunUnitTest`, `RunATCCheck` (objects, packages, worklists), `RunABAP` (run a class or report, get its output), `GetCode resource=SYNTAX` |
    | Diagnose & recover | `GetDiagnostics` (dumps, traces, gateway errors), `UnlockObject` (incl. `force`), `ManageSessions`, `DeleteObject` |
    | Extend SAP side | `ManageSicfNode` plus the optional ABAP endpoints in [`abap-tasks/`](abap-tasks) |
 

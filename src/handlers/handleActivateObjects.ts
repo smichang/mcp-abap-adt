@@ -2,6 +2,7 @@ import { McpError, ErrorCode } from '../lib/utils';
 import { makeAdtRequest, return_error, getBaseUrl, parseAdtErrorXml, appendCookie, removeCookie } from '../lib/utils';
 import { AxiosError } from 'axios';
 import { acquireStatefulOperationLock, refreshStatefulOperationToken, releaseStatefulOperationLock } from '../lib/writeLock';
+import { locateActivationMessages, ActivationMsg } from '../lib/syntaxCheck';
 
 interface ResolvedRef {
     name: string;
@@ -141,7 +142,17 @@ async function activateObjectsCore(args: any) {
             }
             return { isError: true, content: [{ type: 'text', text: lines.join('\n') }] };
         }
-        const messages = parseActivationMessages(actData);
+        const parsedMsgs = parseActivationMessages(actData);
+        const messages = parsedMsgs.messages;
+        // SAP's `line` is unreliable ("line 1"); add the real position from the syntax check.
+        try {
+            const SOURCE_TYPES = ['PROG/P', 'PROG/I', 'CLAS/OC', 'INTF/OI'];
+            const where = await locateActivationMessages(
+                String(baseUrl),
+                refs.filter(r => SOURCE_TYPES.includes(r.type)).map(r => ({ name: r.name, uri: r.uri })),
+                parsedMsgs.structured);
+            where.forEach((w, i) => { if (w) messages[i] += w; });
+        } catch { /* best effort */ }
         const errors = messages.filter(m => m.startsWith('[E]'));
         const warnings = messages.filter(m => m.startsWith('[W]'));
         const activationSkipped = actData.includes('activationExecuted="false"');
@@ -407,11 +418,12 @@ async function resolveViaInactiveObjects(baseUrl: string, name: string): Promise
     return null;
 }
 
-function parseActivationMessages(xml: string): string[] {
+function parseActivationMessages(xml: string): { messages: string[]; structured: ActivationMsg[] } {
     try {
         const convert = require('xml-js');
         const parsed = convert.xml2js(xml, { compact: false }) as any;
         const messages: string[] = [];
+        const structured: ActivationMsg[] = [];
         function walk(node: any) {
             if (!node) return;
             if (node.name === 'msg' && node.attributes) {
@@ -431,13 +443,14 @@ function parseActivationMessages(xml: string): string[] {
                     if (line && line !== '0') m += ` line ${line}`;
                     m += `: ${txts.join(' — ')}`;
                     messages.push(m);
+                    structured.push({ type: t, object: obj, text: txts.join(' ') });
                 }
             }
             if (node.elements) for (const c of node.elements) walk(c);
         }
         walk(parsed);
-        return messages;
+        return { messages, structured };
     } catch {
-        return [];
+        return { messages: [], structured: [] };
     }
 }
