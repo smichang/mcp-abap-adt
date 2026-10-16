@@ -267,16 +267,20 @@ describe('RunATCCheck objects / worklist / verdict', () => {
     });
 
     it('A4. fail_on_error: a run that FINDS errors is a successful call by default, an error on request; a clean run is never an error', async () => {
-        // ZBMM0001 is read-only here (nothing is written): its ATC result has priority-1 findings
-        const dflt = await handleRunATCCheck({ objects: ['ZBMM0001'] });
-        expect(dflt.isError).toBe(false);
-        expect(text(dflt)).toMatch(/Verdict: FAIL/);
-        expect(text(dflt)).toContain('The tool call itself succeeded.');
-        const strict = await handleRunATCCheck({ objects: ['ZBMM0001'], fail_on_error: true });
-        expect(strict.isError).toBe(true);
-        expect(text(strict)).toMatch(/Verdict: FAIL/);
-        expect(text(strict)).toContain('Returned as an error because fail_on_error=true.');
-        expect(text(strict)).not.toContain('The tool call itself succeeded.');
+        const errObj = process.env.MCP_TEST_ATC_ERROR_OBJECT;
+        if (errObj) {
+        // MCP_TEST_ATC_ERROR_OBJECT: an existing object whose ATC result has priority-1 findings (read-only, never written).
+            // System-specific, so the error half of this test only runs when it is set
+            const dflt = await handleRunATCCheck({ objects: [errObj] });
+            expect(dflt.isError).toBe(false);
+            expect(text(dflt)).toMatch(/Verdict: FAIL/);
+            expect(text(dflt)).toContain('The tool call itself succeeded.');
+            const strict = await handleRunATCCheck({ objects: [errObj], fail_on_error: true });
+            expect(strict.isError).toBe(true);
+            expect(text(strict)).toMatch(/Verdict: FAIL/);
+            expect(text(strict)).toContain('Returned as an error because fail_on_error=true.');
+            expect(text(strict)).not.toContain('The tool call itself succeeded.');
+        }
         const clean = await handleRunATCCheck({ objects: ['ZCL_MCP_TRANSPORT_E2E'], fail_on_error: true });
         expect(clean.isError).toBe(false);
         expect(text(clean)).toMatch(/Verdict: PASS/);

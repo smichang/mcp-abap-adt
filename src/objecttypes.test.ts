@@ -274,7 +274,7 @@ describe('text pool in another language (TextPoolLang)', () => {
 describe('transport request (ManageTransport)', () => {
     it('R1. creates an empty request, renames it, finds it in the list, deletes it', async () => {
         const created = mustOk(await handleManageTransport({ action: 'create', description: 'MCP OT e2e (disposable)', dev_class: 'ZMCP', object_url: '/sap/bc/adt/packages/zmcp_ot_none' }), 'create');
-        const trkorr = created.match(/Transport (S4DK\d+) created/)?.[1];
+        const trkorr = created.match(/Transport ([A-Z0-9]{3}K\d+) created/)?.[1];
         expect(trkorr).toBeTruthy();
         try {
             mustOk(await handleManageTransport({ action: 'set_text', transport_number: trkorr, description: 'MCP OT e2e renamed' }), 'rename');
@@ -319,7 +319,7 @@ describe('read matrix over standard objects (nothing written)', () => {
         ['meta: message class',  () => handleGetMeta({ resource: 'MESSAGE_CLASS', message_class: '00' }), /./],
         ['meta: DDIC dtel',      () => handleGetMeta({ resource: 'DDIC', object_type: 'DATA_ELEMENT', name: 'MATNR' }), /MATNR/i],
         ['meta: DDIC domain',    () => handleGetMeta({ resource: 'DDIC', object_type: 'DOMAIN', name: 'MATNR' }), /./],
-        ['where-used',           () => handleGetCode({ resource: 'WHEREUSED', object_name: 'ZCL_AUTH_OBJECT_MAINT', object_type: 'CLAS', max_results: 3 }), /./],
+        ['where-used',           () => handleGetCode({ resource: 'WHEREUSED', object_name: 'ZCL_MCP_AUTH_OBJECT', object_type: 'CLAS', max_results: 3 }), /./],
         ['version list',         () => handleGetCode({ resource: 'VERSION', object_name: 'ZCL_MCP_TRANSPORT_E2E', object_type: 'CLAS' }), /./],
         ['search',               () => handleSearchObject({ query: 'CL_ABAP_TYPEDESCR' }),         /CL_ABAP_TYPEDESCR/],
         ['data preview',         () => handleDataPreview({ table_name: 'T000', max_rows: 2 }),     /MANDT/i],
