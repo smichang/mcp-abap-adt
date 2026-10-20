@@ -15,9 +15,11 @@ export type ResolveResult = { uri: string; type: string } | { error: string };
 
 // Short names the tool descriptions use (and people type) that are not ADT type prefixes: the
 // resolver compares against the quickSearch type (PROG/I, FUGR/FF, ...), so INCL silently matched
-// nothing and an include could only be found without a type. Expanded to the exact ADT subtype.
-const TYPE_ALIASES: Record<string, string> = {
-    INCL: 'PROG/I',
+// nothing and an include could only be found without a type. Expanded to the exact ADT subtype(s).
+// INCL covers both include kinds: a function group's include (LZIFF09F01) is FUGR/I, not PROG/I —
+// `GetMeta TRANSPORT type_hint=INCL` reported it "not found" (OpenCode plan eval, 2026-10-19).
+const TYPE_ALIASES: Record<string, string | string[]> = {
+    INCL: ['PROG/I', 'FUGR/I'],
     FUNC: 'FUGR/FF',
     DTEL: 'DTEL/DE',
     DOMA: 'DOMA/DD',
@@ -46,14 +48,16 @@ export async function resolveAnyObject(baseUrl: string, name: string, objectType
     };
 
     const rawHint = objectType ? objectType.toUpperCase().trim() : '';
-    const hint = TYPE_ALIASES[rawHint] ?? rawHint;
+    const alias = TYPE_ALIASES[rawHint] ?? rawHint;
+    const hints = Array.isArray(alias) ? alias : alias ? [alias] : [];
+    const hint = hints.join(' or ');
     const matches: { uri: string; type: string }[] = [];
     for (const ref of refs) {
         const attrs = ref?._attributes || {};
         const uri = getAttr(attrs, 'uri');
         const type = getAttr(attrs, 'type').toUpperCase();
         if (getAttr(attrs, 'name').toUpperCase() !== name || !uri) continue;
-        if (hint && type !== hint && !type.startsWith(hint + '/')) continue;
+        if (hints.length && !hints.some(h => type === h || type.startsWith(h + '/'))) continue;
         if (!matches.some(m => m.uri === uri)) matches.push({ uri, type });
     }
 

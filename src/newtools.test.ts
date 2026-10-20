@@ -206,6 +206,21 @@ describe('GetCode SYNTAX + include master context', () => {
     });
 });
 
+describe('WriteProgram create-parameters never replace an existing object', () => {
+    it('G3. description/package_name on an existing name is refused (nothing locked or written); overwrite=true opts in; plain update needs neither', async () => {
+        const before = text(await handleGetCode({ resource: 'OBJECT', object_name: MAIN, text_elements: false }));
+        const refused = await handleWriteProgram({ program_name: MAIN, source_code: MAIN_SRC + '\n* replaced', description: 'would replace', package_name: '$TMP' });
+        expect(refused.isError).toBe(true);
+        expect(text(refused)).toMatch(/ALREADY EXISTS/);
+        expect(text(refused)).toMatch(/Nothing was locked or written/);
+        const after = text(await handleGetCode({ resource: 'OBJECT', object_name: MAIN, text_elements: false }));
+        expect(after).toBe(before);                                          // source untouched
+        const forced = await handleWriteProgram({ program_name: MAIN, source_code: MAIN_SRC, description: 'MCP 3.7 tools e2e (disposable)', package_name: '$TMP', overwrite: true });
+        expect(forced.isError).toBeFalsy();
+        expect(text(forced)).toMatch(/UPDATED \(object already existed\)/);
+    });
+});
+
 describe('WriteProgram apply_patch and local snapshots', () => {
     const edit = [{ old_string: "'form got', p", new_string: "'form saw', p" }];
 
@@ -289,7 +304,7 @@ describe('RunATCCheck objects / worklist / verdict', () => {
     it('A3. exactly one target; an unresolvable name is reported, not silently clean', async () => {
         const none = await handleRunATCCheck({});
         expect(none.isError).toBe(true);
-        const two = await handleRunATCCheck({ objects: [MAIN], transport_numbers: ['S4DK000000'] });
+        const two = await handleRunATCCheck({ objects: [MAIN], transport_numbers: ['DEVK000000'] });
         expect(two.isError).toBe(true);
         const mixed = await handleRunATCCheck({ objects: [MAIN, 'ZMCP_NT_NO_SUCH_THING'] });
         expect(text(mixed)).toContain('NOT RESOLVED');

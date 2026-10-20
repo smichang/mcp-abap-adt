@@ -1,6 +1,7 @@
 import { McpError, ErrorCode } from '../lib/utils';
 import { makeAdtRequest, return_error, getBaseUrl } from '../lib/utils';
 import * as fs from 'fs/promises';
+import { writeTranslation } from './dynproTranslation';
 import * as path from 'path';
 
 // Writes classic SAP GUI screens (Dynpro) through ZCL_HTTP_MCP_DYNPRO (package
@@ -51,8 +52,8 @@ export async function handleManageDynpro(args: any) {
         const dynnrArg = args?.dynnr !== undefined && args.dynnr !== null ? String(args.dynnr).trim() : '';
         const transport = args?.transport_number ? String(args.transport_number).trim().toUpperCase() : '';
 
-        if (!['create', 'update', 'delete', 'check'].includes(action)) {
-            throw new McpError(ErrorCode.InvalidParams, 'action must be "create", "update", "delete" or "check"');
+        if (!['create', 'update', 'delete', 'check', 'translate'].includes(action)) {
+            throw new McpError(ErrorCode.InvalidParams, 'action must be "create", "update", "delete", "check" or "translate"');
         }
         if (!program) {
             throw new McpError(ErrorCode.InvalidParams, 'program_name is required (the program owning the screen; SAPL<group> for a function group)');
@@ -67,6 +68,10 @@ export async function handleManageDynpro(args: any) {
         const params: Record<string, string> = { program, dynnr };
         if (transport) params.trkorr = transport;
 
+        if (action === 'translate') {
+            // Target-language texts only (what SE63 does) — the master-language screen is not touched.
+            return await writeTranslation(program, dynnr, args?.language !== undefined ? String(args.language) : '', args?.translations);
+        }
         if (action === 'delete') {
             const response = await makeAdtRequest(url, 'DELETE', 30000, undefined, params);
             return { isError: false, content: [{ type: 'text', text: String(response.data ?? '') }] };

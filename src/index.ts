@@ -139,7 +139,7 @@ export class mcp_abap_adt_server {
         tools: [ // Define available tools
           {
             name: 'GetCode',
-            description: 'Unified getter for ABAP source-related information, selected via the "resource" param. resource=OBJECT: unified getter for source-bearing objects — auto-detects the kind (program, class, interface, include, table, structure, function group, function module, data element, domain, CDS view) via search and returns the source (object_name required; optional kind hint PROG|CLAS|INTF|INCL|TABL|STRU|VIEW|FUGR|FUNC|DTEL|DOMA|CDS; optional function_group when kind=FUNC). resource=VERSION: version history, source retrieval, and version compare (object_name + object_type required; no version/compare_to lists all saved versions; with version returns source at that version; with compare_to returns a unified diff from compare_to (baseline) to version (target, defaults to active); for a class, list mode shows every include (main/local classes/test classes…) and class_include picks the include for version/compare_to; local objects keep one SAP version, so the pre-write snapshots WriteProgram keeps are listed and usable as version=snapshot:<id>|snapshot:latest or compare_to=snapshot:<id>). resource=ENHANCEMENTS: retrieve ABAP enhancements attached to an object, or scan a function group\'s includes (object_name required; optional with_source default true, scan_all default false, max_includes default 100 for function groups). resource=WHEREUSED: find all references to an object across the system (object_name + object_type required; optional max_results default 100, offset for paging — full list cached in-memory for a few minutes). resource=SYNTAX: ADT syntax check of an EXISTING object\'s current source (inactive working version if there is one) — object_name required, optional object_type, max_messages default 20; read-only, nothing locked or written; returns E/W with line:col (use WriteProgram check_only to check NEW source instead; an include is checked without its master program). resource=DYNPRO: classic SAP GUI screens (Dynpro) of a program — object_name = the program (for a function group use SAPL<group>); without dynnr lists its screens (number, type, description; max_results/offset paging); with dynnr returns that screen\'s attributes, elements and flow logic (raw=true returns the complete round-trippable JSON definition instead — large, consider output_file).',
+            description: 'Unified getter for ABAP source-related information, selected via the "resource" param. resource=OBJECT: unified getter for source-bearing objects — auto-detects the kind (program, class, interface, include, table, structure, function group, function module, data element, domain, CDS view) via search and returns the source (object_name required; optional kind hint PROG|CLAS|INTF|INCL|TABL|STRU|VIEW|FUGR|FUNC|DTEL|DOMA|CDS; optional function_group when kind=FUNC; a function module also gets a second line with its attributes — processing type normal/RFC/update, last changed at/by — which output_file does not write, so a saved file stays pure source). resource=VERSION: version history, source retrieval, and version compare (object_name + object_type required; no version/compare_to lists all saved versions; with version returns source at that version; with compare_to returns a unified diff from compare_to (baseline) to version (target, defaults to active); for a class, list mode shows every include (main/local classes/test classes…) and class_include picks the include for version/compare_to; local objects keep one SAP version, so the pre-write snapshots WriteProgram keeps are listed and usable as version=snapshot:<id>|snapshot:latest or compare_to=snapshot:<id>). resource=ENHANCEMENTS: retrieve ABAP enhancements attached to an object, or scan a function group\'s includes (object_name required; optional with_source default true, scan_all default false, max_includes default 100 for function groups). resource=WHEREUSED: find all references to an object across the system (object_name + object_type required; optional max_results default 100, offset for paging — full list cached in-memory for a few minutes). resource=SYNTAX: ADT syntax check of an EXISTING object\'s current source (inactive working version if there is one) — object_name required, optional object_type, max_messages default 20; read-only, nothing locked or written; returns E/W with line:col (use WriteProgram check_only to check NEW source instead; an include is checked in its master program\'s context, and the output names that program). resource=DYNPRO: classic SAP GUI screens (Dynpro) of a program — object_name = the program (for a function group use SAPL<group>); without dynnr lists its screens (number, type, description; max_results/offset paging); with dynnr returns that screen\'s attributes, elements and flow logic (raw=true returns the complete round-trippable JSON definition instead — large, consider output_file).',
             inputSchema: {
               type: 'object',
               properties: {
@@ -221,6 +221,10 @@ export class mcp_abap_adt_server {
                   type: 'string',
                   description: 'DYNPRO only. Optional. Screen number, e.g. "0100" (leading zeros optional). Omit to list all screens of the program.'
                 },
+                language: {
+                  type: 'string',
+                  description: 'DYNPRO only, with dynnr. Instead of the screen definition, list its translatable element texts for this target language (SAP key M, ISO ZF or LXE zhTW): element, maximum length, master-language text and current target text, "(missing)" where none exists. Read-only; write with ManageDynpro action=translate.'
+                },
                 raw: {
                   type: 'boolean',
                   description: 'DYNPRO only, with dynnr. Return the complete screen definition as JSON (RPY_DYNPRO_READ external format: header, containers, fields_to_containers, flow_logic, params) instead of the readable summary. This is the shape ManageDynpro will accept for writes. Large (a 33-element screen is ~35 KB): with output_file the JSON goes ONLY to the file and the reply is just the path and size — pass that file to ManageDynpro definition_file.',
@@ -228,7 +232,7 @@ export class mcp_abap_adt_server {
                 },
                 ...backgroundSchemaProps
               },
-              required: ['resource', 'object_name']
+              required: ['resource']  // object_name is checked per resource in handleGetCode (OBJECT may use objects[] instead)
             }
           },
           {
@@ -351,7 +355,8 @@ export class mcp_abap_adt_server {
                   type: 'number',
                   description: 'List mode (DUMP or TRACE). Optional. Number of entries to skip before applying the results limit, for paging. The full list (post-filter) is cached in-memory for a few minutes, so a follow-up call with a different offset is served without re-querying SAP.',
                   default: 0
-                }
+                },
+                ...backgroundSchemaProps
               },
               required: ['resource']
             }
@@ -378,6 +383,14 @@ export class mcp_abap_adt_server {
                 transaction_name: {
                   type: 'string',
                   description: 'TRANSACTION only (required). Name of the ABAP transaction'
+                },
+                object_name: {
+                  type: 'string',
+                  description: 'TRANSPORT only (optional). With it, answers "which change request holds this object?" instead of listing: read-only ADT transportchecks, NO lock (safe on a colleague\'s object). Verdict LOCAL / FREE / HELD_BY_SELF / HELD_BY_OTHER, with the holder\'s request, task and owner, or your own open requests when free. Use this as the check before WriteProgram/DeleteObject; do not probe with UnlockObject.'
+                },
+                type_hint: {
+                  type: 'string',
+                  description: 'TRANSPORT + object_name only (optional). Disambiguates a name shared by several object types (PROG, CLAS, INTF, FUGR/FF, TABL, ...).'
                 },
                 transport_number: {
                   type: 'string',
@@ -582,6 +595,11 @@ export class mcp_abap_adt_server {
                   type: 'string',
                   description: 'Optional. Path to a local file containing the ABAP source. Relative paths are resolved against the server\'s working directory. Use this for large source to avoid burning LLM context. Mutually exclusive with source_code (if both are given, source_file wins).'
                 },
+                overwrite: {
+                  type: 'boolean',
+                  description: 'Optional, default false. description/package_name mean "create a new object". If the object already exists the call is REFUSED (nothing locked or written), because another developer may own that name - even in $TMP. To update an existing object omit description/package_name (or use edits[]); pass overwrite=true only to deliberately replace it through the create parameters.',
+                  default: false
+                },
                 include_raw_sap_response: {
                   type: 'boolean',
                   description: 'Optional. On a source PUT failure, include the complete raw SAP ADT response for diagnosis. Default false to avoid a potentially large response consuming context; enable only when the concise error and source diagnostics are insufficient.',
@@ -650,7 +668,7 @@ export class mcp_abap_adt_server {
                 },
                 syntax_check: {
                   type: 'boolean',
-                  description: 'Optional. Run an ADT syntax check of the new source BEFORE locking; on any error nothing is locked or written and the errors (line:col — text) are returned. Existing objects only (a new object is created first). A failing check call never blocks the write. Default false — includes are checked without their master program, so a false error is possible there.',
+                  description: 'Optional. Run an ADT syntax check of the new source BEFORE locking; on any error nothing is locked or written and the errors (line:col — text) are returned. Existing objects only (a new object is created first). A failing check call never blocks the write. Default false. An include is checked in its master program\'s context; with no master program known it is checked alone (the output says so), and then false errors are possible.',
                   default: false
                 },
                 check_only: {
@@ -742,8 +760,8 @@ export class mcp_abap_adt_server {
               properties: {
                 action: {
                   type: 'string',
-                  enum: ['create', 'update', 'delete', 'check'],
-                  description: 'create: new screen (fails if it exists). update: overwrite an existing screen. delete: remove it. check: run SE51\'s consistency check on the saved screen (e.g. after adding missing MODULEs to the program).'
+                  enum: ['create', 'update', 'delete', 'check', 'translate'],
+                  description: 'create: new screen (fails if it exists). update: overwrite an existing screen (its MASTER language — never send translated text here, it replaces the master texts). delete: remove it. check: run SE51\'s consistency check on the saved screen (e.g. after adding missing MODULEs to the program). translate: write the texts of a screen in another language (what SE63 does) with language + translations; the master-language definition is not touched. Read the translatable elements first with GetCode resource=DYNPRO dynnr language.'
                 },
                 program_name: {
                   type: 'string',
@@ -794,7 +812,15 @@ export class mcp_abap_adt_server {
                 },
                 transport_number: {
                   type: 'string',
-                  description: 'Workbench request or one of its tasks, e.g. DEVK900123. Required unless the program is in a local ($...) package.'
+                  description: 'Workbench request or one of its tasks, e.g. DEVK900123. Required unless the program is in a local ($...) package. Not used by translate.'
+                },
+                language: {
+                  type: 'string',
+                  description: 'translate only. Target language: SAP key (M = Traditional Chinese), ISO code (ZF) or LXE code (zhTW). Must differ from the screen\'s master language.'
+                },
+                translations: {
+                  type: ['object', 'array', 'string'],
+                  description: 'translate only. Element texts in the target language: {"GW_ZCOT0147A-ZDESC":"週期說明"} or [{"element":"...","text":"..."}]. Element names and maximum lengths come from GetCode resource=DYNPRO dynnr language. Everything is validated first; either all texts are written or none. A translation cannot be deleted here. The texts are NOT on a workbench request: they are recorded in the translation log and travel with SE63\'s translation transport.'
                 }
               },
               required: ['action', 'program_name', 'dynnr']
@@ -954,7 +980,7 @@ export class mcp_abap_adt_server {
           },
           {
             name: 'ManageSicfNode',
-            description: 'Create or delete a SICF node directly under default_host/zmcp (action=create_sicf_node|delete_sicf_node), via the ZCL_MCP_SICF_ADMIN/ZCL_MCP_DISPATCH SICF service — the one-time manually-created bootstrap node under which every future custom ADT-gap endpoint now lives, with no further manual SICF steps required. create_sicf_node payload: "name=...\\nhandler_class=...\\ndocu=...\\ntransport=..." (name/handler_class/docu required; handler_class must already exist and implement IF_HTTP_EXTENSION). delete_sicf_node payload: "name=...\\ntransport=...". Also exposes two lightweight diagnostic actions proving the dispatch path itself: "ping" (echoes payload plus the connected SAP user/timestamp) and "echo_upper" (uppercases payload). A new ABAP-side action is added as a WHEN branch in ZCL_MCP_DISPATCH=>dispatch (WriteProgram + ActivateObjects, no SICF/Basis step) and becomes callable through this same tool immediately.',
+            description: 'For the MCP gateway\'s OWN endpoints only — business HTTP services are created in SICF manually (or as OData/RAP), not here. Create or delete a SICF node directly under default_host/zmcp (action=create_sicf_node|delete_sicf_node), via the ZCL_MCP_SICF_ADMIN/ZCL_MCP_DISPATCH SICF service — the one-time manually-created bootstrap node under which every future custom ADT-gap endpoint now lives, with no further manual SICF steps required. create_sicf_node payload: "name=...\\nhandler_class=...\\ndocu=...\\ntransport=..." (name/handler_class/docu required; handler_class must already exist and implement IF_HTTP_EXTENSION). delete_sicf_node payload: "name=...\\ntransport=...". Also exposes two lightweight diagnostic actions proving the dispatch path itself: "ping" (echoes payload plus the connected SAP user/timestamp) and "echo_upper" (uppercases payload). A new ABAP-side action is added as a WHEN branch in ZCL_MCP_DISPATCH=>dispatch (WriteProgram + ActivateObjects, no SICF/Basis step) and becomes callable through this same tool immediately.',
             inputSchema: {
               type: 'object',
               properties: {

@@ -3,6 +3,7 @@ import { handleGetPackage } from './handleGetPackage';
 import { handleGetTypeInfo } from './handleGetTypeInfo';
 import { handleGetTransaction } from './handleGetTransaction';
 import { handleGetTransport } from './handleGetTransport';
+import { handleCheckObjectTransport } from './handleCheckObjectTransport';
 import { handleGetMessageClass } from './handleGetMessageClass';
 import { handleGetDDICObject } from './handleGetDDICObject';
 import { handleGetInactiveObjects } from './handleGetInactiveObjects';
@@ -24,7 +25,7 @@ export async function handleGetMeta(args: any) {
             case 'TRANSACTION':
                 return await wrap(rest, 'TRANSACTION', () => handleGetTransaction(rest));
             case 'TRANSPORT':
-                return await wrap(rest, 'TRANSPORT', () => handleGetTransport(rest));
+                return await wrap(rest, 'TRANSPORT', () => rest.object_name ? handleCheckObjectTransport(rest) : handleGetTransport(rest));
             case 'MESSAGE_CLASS':
                 return await wrap(rest, 'MESSAGE_CLASS', () => handleGetMessageClass(rest));
             case 'DDIC':

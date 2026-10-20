@@ -1,4 +1,5 @@
 import { McpError, ErrorCode } from '../lib/utils';
+import { isDifferentChange } from '../lib/transportCheck';
 import { makeAdtRequest, return_error, getBaseUrl, parseAdtErrorXml, appendCookie, removeCookie } from '../lib/utils';
 import { getConfig } from '../index';
 import { AxiosError } from 'axios';
@@ -185,7 +186,7 @@ async function deleteOne(args: any) {
         // Same protection as WriteProgram's reassignment guard: if the object is already
         // locked under a different open transport than the one the caller supplied, refuse
         // rather than let the delete move its registration.
-        if (transportNumber && existingCorrNr && existingCorrNr !== transportNumber) {
+        if (transportNumber && existingCorrNr && await isDifferentChange(baseUrl, resolved.uri, existingCorrNr, transportNumber)) {
             const unlockError = await attemptUnlock(objectUrl, lockHandle);
             const txt = existingCorrText ? ` ("${existingCorrText}")` : '';
             const lines = [

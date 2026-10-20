@@ -9,6 +9,7 @@ Most tools in this server talk to stock ADT and need nothing installed on SAP. A
 | `ManageAuthObject` (SU21) | `auth_object` | `ZCL_HTTP_MCP_AUTH_OBJECT` | `ZCL_MCP_AUTH_OBJECT`, `ZCX_MCP_AUTH_OBJECT` |
 | `ManageTransport` `move_object` / `merge` / `remove_object` | `transport_admin` | `ZCL_HTTP_MCP_TRANSPORT_ADMIN` | `ZCL_MCP_TRANSPORT_ADMIN` |
 | `ManageDynpro`, `GetCode resource=DYNPRO` | `dynpro` | `ZCL_HTTP_MCP_DYNPRO` | `ZCL_MCP_DYNPRO`, `ZCX_MCP_DYNPRO` |
+| `ManageDynpro action=translate`, `GetCode resource=DYNPRO language` | `dynpro_transl` | `ZCL_HTTP_MCP_DYNPRO_TRANSL` | `ZCL_MCP_DYNPRO_TRANSL` |
 | `UnlockObject force=true` (delete own orphan SM12 locks) | `lock_admin` | `ZCL_HTTP_MCP_LOCK_ADMIN` | `ZCL_MCP_LOCK_ADMIN` (raises `ZCX_MCP_DISPATCH`) |
 | `ManageSessions` (list / end own ABAP sessions) | `session_admin` | `ZCL_HTTP_MCP_SESSION_ADMIN` | `ZCL_MCP_SESSION_ADMIN` (raises `ZCX_MCP_DISPATCH`) |
 

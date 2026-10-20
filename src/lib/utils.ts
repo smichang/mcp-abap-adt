@@ -299,7 +299,7 @@ export async function makeAdtRequest(url: string, method: string, timeout: numbe
         searchCache.clear();
         // POST also carries READ-ONLY queries (where-used, data preview, check runs, ATC, unit tests,
         // class/program run) — those must not wipe a paged result the caller is still walking through.
-        if (!/\/usageReferences|\/datapreview\/|\/checkruns|\/atc\/|\/abapunit\/|\/classrun\/|\/programrun\/|_action=(LOCK|UNLOCK)/.test(url + (params ? '?' + new URLSearchParams(params as any).toString() : ''))) {
+        if (!/\/usageReferences|\/datapreview\/|\/checkruns|\/transportchecks|\/atc\/|\/abapunit\/|\/classrun\/|\/programrun\/|_action=(LOCK|UNLOCK)/.test(url + (params ? '?' + new URLSearchParams(params as any).toString() : ''))) {
             clearQueryCache();
         }
     }

@@ -1,6 +1,15 @@
 import { makeAdtRequest, return_error, return_response, getBaseUrl, parseAdtErrorXml } from '../lib/utils';
 import convert from 'xml-js';
 import { AxiosError } from 'axios';
+import { freestyleRows } from '../lib/transportCheck';
+
+/** Pure: the warning for an inactive version saved by `user` on an object `owner` is responsible for. */
+export function ownerNote(user: string, owner: string): string {
+    if (!owner || !user || owner.toUpperCase() === user.toUpperCase()) return '';
+    return `    ⚠ responsible: ${owner} — this inactive version by ${user} sits on ${owner}'s object. `
+        + `Activating publishes it into their object, DeleteObject deletes their object; to drop only `
+        + `${user}'s changes, discard the inactive version (manual SE80/Eclipse) after comparing with GetCode resource=VERSION.`;
+}
 
 /**
  * Lists ABAP repository objects the connection's own SAP user currently has
@@ -39,6 +48,24 @@ export async function handleGetInactiveObjects(_args: any) {
                 }
                 const entries = Array.isArray(root[entryKey]) ? root[entryKey] : [root[entryKey]];
 
+                // Who is responsible for each object (TADIR) — a plan-eval run called a colleague's
+                // $TMP program "SSCR-owned" because this list only shows who saved the inactive version.
+                const names = [...new Set(entries.map((en: any) => {
+                    const ok = Object.keys(en).find(k => k.endsWith(':object') || k === 'object');
+                    const node = ok ? en[ok] : {};
+                    const rk = Object.keys(node).find(k => k.endsWith(':ref') || k === 'ref');
+                    const ra = rk ? (node[rk]._attributes || {}) : {};
+                    return String(ra.name || ra['adtcore:name'] || '').toUpperCase();
+                }).filter((n: string) => /^[A-Z0-9_/]+$/.test(n)))].slice(0, 100) as string[];
+                const owners = new Map<string, { author: string; devclass: string }>();
+                if (names.length) {
+                    try {
+                        const rows = await freestyleRows(String(baseUrl),
+                            `SELECT OBJ_NAME, AUTHOR, DEVCLASS FROM TADIR WHERE PGMID = 'R3TR' AND OBJ_NAME IN (${names.map(n => `'${n}'`).join(',')})`);
+                        for (const r of rows) if (r.OBJ_NAME) owners.set(r.OBJ_NAME.toUpperCase(), { author: r.AUTHOR, devclass: r.DEVCLASS });
+                    } catch { /* owner info is a bonus; the list itself stands */ }
+                }
+
                 const lines: string[] = [`Inactive objects (${entries.length}):`, ''];
                 for (const entry of entries) {
                     const objKey = Object.keys(entry).find(k => k.endsWith(':object') || k === 'object');
@@ -56,10 +83,14 @@ export async function handleGetInactiveObjects(_args: any) {
                     const user = objAttrs.user || objAttrs['ioc:user'] || '';
                     const deleted = String(objAttrs.deleted || objAttrs['ioc:deleted'] || 'false') === 'true';
 
+                    const own = owners.get(String(name).toUpperCase());
                     let line = `- ${name} (${type})${deleted ? ' [DELETION]' : ''}`;
                     if (user) line += `  user=${user}`;
+                    if (own) line += `  responsible=${own.author || '?'}  package=${own.devclass || '?'}`;
                     if (uri) line += `  uri=${uri}`;
                     lines.push(line);
+                    const note = own ? ownerNote(user, own.author) : '';
+                    if (note) lines.push(note);
 
                     if (transportKey) {
                         const tAttrs = entry[transportKey]._attributes || {};

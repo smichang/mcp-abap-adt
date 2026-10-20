@@ -1,4 +1,5 @@
 import { McpError, ErrorCode } from '../lib/utils';
+import { isDifferentChange } from '../lib/transportCheck';
 import { makeAdtRequest, return_error, getBaseUrl, parseAdtErrorXml, appendCookie, removeCookie } from '../lib/utils';
 import { getExistingTasks } from './handleManageTransport';
 import { acquireStatefulOperationLock, releaseStatefulOperationLock, refreshStatefulOperationToken } from '../lib/writeLock';
@@ -249,6 +250,18 @@ async function writeProgramCore(args: any) {
         // Auto-detect object type (program, include, or function module) via search
         let objInfo = await resolveObjectInfo(String(baseUrl), programName);
 
+        // ── Guard: description / package_name mean "create"; an existing object is never replaced by that ──
+        // WriteProgram used to overwrite silently here ("Source code written", no "Created"): a scratch
+        // copy created under a colleague's existing $TMP name replaced their working source (2026-10-16).
+        // Updating an existing object needs no description/package_name; overwrite=true opts in explicitly.
+        if (objInfo && (description || packageName) && args?.overwrite !== true && !patchMode && !checkOnly) {
+            return { isError: true, content: [{ type: 'text', text:
+                `Refusing to write: ${objInfo.typeLabel} '${programName}' ALREADY EXISTS and description/package_name were supplied, which means "create new".\n` +
+                `Nothing was locked or written. If you meant to UPDATE it, repeat the call without description/package_name (or use edits[]). ` +
+                `If you really want to replace it via the create parameters, pass overwrite=true. ` +
+                `Names are shared with other developers (even in $TMP) - SearchObject the name first and check who owns it.` }] };
+        }
+
         // ── Patch mode: read the current source from SAP and apply edits[] to it ──
         // Fails fast, before any lock, when an anchor is missing or ambiguous. The source is read
         // again after the LOCK (below) and the edits re-applied if it changed in between, so a
@@ -442,7 +455,7 @@ async function writeProgramCore(args: any) {
         // If the caller passes a different transport_number, SAP would SILENTLY move the
         // object out of its current request into the new one — a data-integrity hazard.
         // Refuse: unlock and report the conflict so the caller can decide.
-        if (effectiveTransportNumber && existingCorrNr && existingCorrNr !== effectiveTransportNumber) {
+        if (effectiveTransportNumber && existingCorrNr && await isDifferentChange(String(baseUrl), objInfo.uri, existingCorrNr, effectiveTransportNumber)) {
             const unlockError = await attemptUnlock(objectUrl, lockHandle);
 
             const label = objInfo.typeLabel.charAt(0).toUpperCase() + objInfo.typeLabel.slice(1);
@@ -787,7 +800,7 @@ async function writeProgramCore(args: any) {
         if (created) {
             lines.push(`Created ${objInfo.typeLabel} '${programName}' in package '${packageName}'.`);
         }
-        lines.push(`Source code written to ${objInfo.typeLabel} '${programName}'.`);
+        lines.push(`Source code ${created ? 'written' : 'UPDATED (object already existed)'} ${created ? 'to' : 'in'} ${objInfo.typeLabel} '${programName}'.`);
         if (created && objInfo.type === 'CLAS/OC' && /activation failed/i.test(activationResult)) {
             lines.push(`RECOVERY: This was the class's first activation. Correct the complete source and retry WriteProgram. If SAP rejects the overwrite, use SAP GUI/Eclipse ADT to remove the class's CTS/deletion entry from its change request, remove its inactive-object entry, then delete the repository object before recreating the name.`);
         }

@@ -14,6 +14,13 @@ export async function handleGetCode(args: any) {
     try {
         const resource = args?.resource ? String(args.resource).toUpperCase() : '';
         const { resource: _r, ...rest } = args ?? {};
+        // The schema no longer marks object_name as required: an objects[] batch call was rejected by
+        // the client's validation ("object_name: Missing key") unless a dummy name was passed.
+        if (RESOURCES.includes(resource) && !rest.object_name && !(resource === 'OBJECT' && rest.objects !== undefined)) {
+            throw new McpError(ErrorCode.InvalidParams, resource === 'OBJECT'
+                ? 'object_name (or objects[] for a batch) is required'
+                : `object_name is required for resource=${resource}`);
+        }
         switch (resource) {
             // OBJECT/VERSION handlers don't wrap themselves in maybeBackground (ENHANCEMENTS/
             // WHEREUSED do), so honor the schema's background/output_file here instead.
@@ -29,7 +36,9 @@ export async function handleGetCode(args: any) {
             case 'WHEREUSED':
                 return await handleGetWhereUsed(rest);
             case 'SYNTAX':
-                return await handleCheckSyntax(rest);
+                // output_file was silently ignored here (plan eval 2026-10-19: a plan cited an
+                // evidence file that was never written)
+                return await maybeBackground(rest, `GetCode SYNTAX ${slugName(rest)}`, `syntax-${slugName(rest)}`, () => handleCheckSyntax(rest));
             case 'DYNPRO':
                 // raw JSON is 35-50 KB per screen: with output_file it goes ONLY to the
                 // file (eval 2026-10-02: returning it inline as well overflowed a client)

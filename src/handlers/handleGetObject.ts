@@ -7,6 +7,7 @@ import { handleGetInclude } from './handleGetInclude';
 import { handleGetTable } from './handleGetTable';
 import { handleGetStructure } from './handleGetStructure';
 import { handleGetFunction } from './handleGetFunction';
+import { handleGetEnhancements } from './handleGetEnhancements';
 import { handleGetDDICObject } from './handleGetDDICObject';
 import { handleDataPreview } from './handleDataPreview';
 import { suggestObjectNames, formatSuggestions } from '../lib/suggestNames';
@@ -207,10 +208,16 @@ export async function handleGetObject(args: any) {
             }
         }
         if (!kind) {
+            // An enhancement implementation is source too: serve it instead of refusing. Plan-eval
+            // runs read "kind is not supported … use a more specific tool" as "ENHO source cannot
+            // be read" and diagnosed around the enhancement (2026-10-19).
+            if (String(foundType).toUpperCase().startsWith('ENHO')) {
+                return await handleGetEnhancements({ object_name: name, with_source: true });
+            }
             return {
                 isError: true,
-                content: [{ type: 'text', text: `Found '${name}' (type ${foundType}) but kind is not supported by GetObject. Pass kind=PROG|CLAS|INTF|INCL|TABL|STRU|VIEW|FUGR|FUNC|DTEL|DOMA|CDS to bypass auto-detect, or use a more specific tool.` }]
-                };
+                content: [{ type: 'text', text: unsupportedKindMessage(name, String(foundType)) }]
+            };
         }
         if (args?.class_include && kind !== 'CLAS' && String(args.class_include).toLowerCase() !== 'main') {
             throw new McpError(ErrorCode.InvalidParams, `class_include is only valid for a class ('${name}' is ${kind}).`);
@@ -219,6 +226,26 @@ export async function handleGetObject(args: any) {
     } catch (error) {
         return return_error(error);
     }
+}
+
+// Where to read an object type GetCode OBJECT does not serve (named, so the caller does not conclude
+// the object is unreadable).
+const READ_ELSEWHERE: Record<string, string> = {
+    DEVC: 'a package: GetMeta resource=PACKAGE package_name=<name>',
+    MSAG: 'a message class: GetMeta resource=MESSAGE_CLASS message_class=<name>',
+    TRAN: 'a transaction: GetMeta resource=TRANSACTION transaction_name=<name>',
+    ENHS: 'an enhancement spot: GetCode resource=ENHANCEMENTS object_name=<name>',
+    SUSO: 'an authorization object: DataPreview on TOBJ (fields) / TACTZ (activities); ManageAuthObject maintains it',
+    WAPA: 'a BSP/UI5 web application: not readable through this gateway (its OData service is a separate object)',
+    SICF: 'an ICF service node: not readable through this gateway',
+};
+
+/** Pure: the refusal text for a found but unsupported type, naming the tool that does read it. */
+export function unsupportedKindMessage(name: string, foundType: string): string {
+    const where = READ_ELSEWHERE[foundType.split('/')[0].toUpperCase()];
+    return where
+        ? `'${name}' is ${where.replace(/<name>/g, name)}. (GetCode OBJECT reads source-bearing objects only; type ${foundType}.)`
+        : `Found '${name}' (type ${foundType}) but GetCode OBJECT does not read this type. Pass kind=PROG|CLAS|INTF|INCL|TABL|STRU|VIEW|FUGR|FUNC|DTEL|DOMA|CDS to bypass auto-detect if it is one of those.`;
 }
 
 // Returns the ADT type string (e.g. "DTEL/DE") for `objectName`, or null if search has no exact match.

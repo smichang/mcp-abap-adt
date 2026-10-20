@@ -17,12 +17,12 @@ resource's own fields.
 | | `SYNTAX` | Syntax-check an existing object | `object_name` (+ `object_type`); checks the current source (inactive working version included), returns `E/W line:col — text`; read-only, no SLIN/ATC; objects without source (DTEL, DOMA, FUGR) are refused |
 | | `WHEREUSED` | Where-used list | `object_name` + `object_type`; `max_results`/`offset`; cached ~3 min; a very widely used object that exceeds the 60 s window continues in the background and returns an output-file path — read it, then page with `offset` |
 | | `ENHANCEMENTS` | Enhancement implementations / per-object list / function-group scan | `scan_all=true` fans out and is capped by `max_includes` |
-| | `DYNPRO` † | Classic screens | `object_name` = program (`SAPL<group>` for a function group); no `dynnr` lists screens; `dynnr` shows attributes, elements, flow logic; `raw=true` full JSON |
+| | `DYNPRO` † | Classic screens | `object_name` = program (`SAPL<group>` for a function group); no `dynnr` lists screens; `dynnr` shows attributes, elements, flow logic; `raw=true` full JSON; `dynnr` + `language` lists translatable texts |
 | `GetMeta` | `PACKAGE` | Package contents | paged (`max_results`, `offset`), cached |
 | | `TYPEINFO` | Table / structure fields | use to verify `SELECT` columns |
 | | `DDIC` | CDS / data element / domain detail | `object_type` selects which |
 | | `TRANSACTION` | Tcode → program, package | |
-| | `TRANSPORT` | List a user's transports or inspect one (tasks + objects) | paged, cached |
+| | `TRANSPORT` | List a user's transports or inspect one (tasks + objects); with `object_name` (+ `type_hint`): who holds this object, no lock | paged, cached |
 | | `MESSAGE_CLASS` | Texts of an SE91 class, paged (`max_results` default 200, `offset`); optional `language` (ISO) reads a translation, shows the true master language, refuses a language without texts | |
 | | `INACTIVE_OBJECTS` | What your user has written but not activated | no params |
 | `GetDiagnostics` | `DUMP` | Short dumps | list (user/date/category) or `dump_id` |
@@ -52,7 +52,7 @@ Do not use background mode for writes. A result over 20,000 characters written w
 | `DeleteObject` | Delete a repository object | Destructive. `object_names[]` deletes up to 20 in the given order (dependents first, package last); a failure doesn't stop the rest. Verified on program, function module, domain and the five `ManageDDIC` types; confirm other types on a disposable object first |
 | `TextPoolLang` † | Read/write a program's text pool in an explicit language | Merges per id+key; `delete_keys` removes a row (an empty value blanks it) |
 | `ManageAuthObject` † | Create/update an SU21 authorization object, fields and `ACTVT` activities | Fields lock once code or roles use the object (409); define the full field list first. No delete |
-| `ManageDynpro` † | Create/update/delete/check a classic screen of a customer program | Write the program's modules first; a result with consistency errors means the screen **is saved** — fix the program, then `action=check` |
+| `ManageDynpro` † | Create/update/delete/check a classic screen of a customer program; `translate` writes target-language texts (`language` + `translations`) | Write the program's modules first; a result with consistency errors means the screen **is saved** — fix the program, then `action=check` |
 | `ManageSicfNode` † | `ping`, `create_sicf_node`, `delete_sicf_node` under `default_host/zmcp` | See `abap-tasks/README.md`. A node's *Alternative Logon Procedure* is `ICFSERVICE-LOG_FLAG = 'X'` together with `LOGIN_PROCESS = 'L'` — `'L'` alone still shows *Standard* in SICF; check with `DataPreview SELECT * FROM icfservice WHERE icfparguid = '<zmcp node guid>'`. Error texts of the dispatcher and the text pool need message classes `ZMCP_DISPATCH` / `ZMCP_TEXTPOOL`; without them errors read `I:ZMCP_DISPATCH:001 …`. Identical repeated `GET`s can be served from a cache — change the probe input to see a new text |
 
 ## Test and quality tools

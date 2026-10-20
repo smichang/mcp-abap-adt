@@ -1,4 +1,5 @@
 import { McpError, ErrorCode } from '../lib/utils';
+import { isDifferentChange } from '../lib/transportCheck';
 import { makeAdtRequest, return_error, getBaseUrl, parseAdtErrorXml, appendCookie, removeCookie } from '../lib/utils';
 import { AxiosError } from 'axios';
 import { acquireStatefulOperationLock, refreshStatefulOperationToken, releaseStatefulOperationLock } from '../lib/writeLock';
@@ -257,7 +258,7 @@ async function setProcessingType(
     }
 
     // Guard: never silently reassign the object to a different transport
-    if (transportNumber && existingCorrNr && existingCorrNr !== transportNumber) {
+    if (transportNumber && existingCorrNr && await isDifferentChange(String(baseUrl), resolved.uri, existingCorrNr, transportNumber)) {
         try {
             await makeAdtRequest(objectUrl, 'POST', 15000, '',
                 { _action: 'UNLOCK', lockHandle: encodeURIComponent(lockHandle) },

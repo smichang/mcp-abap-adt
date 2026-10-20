@@ -5,6 +5,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.11.0] - 2026-10-20
+
+### Added
+- **`GetMeta resource=TRANSPORT object_name=…` — who holds this object?** Read-only ADT `POST /cts/transportchecks`, **no lock**. Verdict `LOCAL` / `FREE` / `HELD_BY_SELF` / `HELD_BY_OTHER` with the holder's request, task and owner (or your own open requests when free). Replaces the `UnlockObject` probe as the pre-write check. Optional `type_hint` disambiguates a shared name. Function modules are checked against the CTS lock table, because ADT reports every function module as free.
+- **`ManageDynpro action=translate` + `GetCode DYNPRO dynnr language`** — language-dependent screen texts (what SE63 does for a Dynpro) through the new standalone endpoint `default_host/zmcp/dynpro_transl` (`ZCL_HTTP_MCP_DYNPRO_TRANSL` → `ZCL_MCP_DYNPRO_TRANSL`, `abap-tasks/zmcp-dynpro-transl/`). Everything is validated first; either all texts are written or none. The texts are not on a workbench request; they travel with SE63's translation transport.
+- **`GetCode OBJECT` of a function module** also shows its processing type (normal / RFC / update), last change and release state; `output_file` still writes the source only.
+- **`WriteProgram overwrite`** (default false) — see Changed.
+
+### Changed
+- **`WriteProgram` never replaces an existing object through its create parameters.** `description` / `package_name` on a name that already exists is refused before any lock unless `overwrite=true`. An update of an existing object reports `UPDATED (object already existed)`.
+- **Reassignment guards** in `WriteProgram`, `DeleteObject` and `ActivateObjects(rfc_enabled)` accept the holder's request or any of its tasks as `transport_number`.
+- `GetMeta INACTIVE_OBJECTS` shows each object's responsible user and package, and warns when the inactive version sits on someone else's object.
+- `ManageSicfNode` description says it is for the gateway's own endpoints only.
+
+### Fixed
+- `output_file` / `background` were silently ignored by `GetCode SYNTAX` and every `GetDiagnostics` resource.
+- `GetCode` no longer marks `object_name` as required in its schema, so an `objects[]` batch is not rejected by the client.
+- `GetCode OBJECT` on an enhancement implementation returns its source; other unsupported types name the tool that reads them. `GetCode DYNPRO` on a selection screen explains it is generated from the source.
+- `type_hint` / `object_type` `INCL` also matches function-group includes (`FUGR/I`).
+
 ## [3.10.0] - 2026-10-15
 
 ### Added

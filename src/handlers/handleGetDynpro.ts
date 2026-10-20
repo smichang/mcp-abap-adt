@@ -1,6 +1,7 @@
 import { McpError, ErrorCode } from '../lib/utils';
 import { makeAdtRequest, return_error, getBaseUrl } from '../lib/utils';
 import { cacheKey, getCachedList, setCachedList } from '../lib/queryCache';
+import { readTranslation } from './dynproTranslation';
 
 // Talks to ZCL_HTTP_MCP_DYNPRO (package ZMCP), a standalone SICF service at
 // default_host/zmcp/dynpro — NOT an ADT resource. Standard ADT has no REST
@@ -55,9 +56,15 @@ export async function handleGetDynpro(args: any) {
         const url = `${baseUrl}/zmcp/dynpro`;
 
         if (!dynnrArg) {
+            if (args?.language !== undefined && args.language !== null && String(args.language).trim() !== '') {
+                throw new McpError(ErrorCode.InvalidParams, 'language needs dynnr: translations are read per screen');
+            }
             return await listScreens(url, program, args);
         }
         const dynnr = dynnrArg.padStart(4, '0');
+        if (args?.language !== undefined && args.language !== null && String(args.language).trim() !== '') {
+            return await readTranslation(program, dynnr, String(args.language));
+        }
         const response = await makeAdtRequest(url, 'GET', 30000, undefined, { program, dynnr });
         const json = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
 
@@ -94,7 +101,17 @@ async function listScreens(url: string, program: string, args: any) {
     const windowed = full.slice(offset, offset + limit);
     const head = `Screens of ${program} (${full.length} total, showing ${windowed.length} from offset ${offset})${fromCache ? ' [cached]' : ''}`;
     const rows = windowed.map(s => `${s.dynnr}  ${typeLabel(s.type).padEnd(32)}  ${s.description ?? ''}`);
-    return { isError: false, content: [{ type: 'text', text: [head, '', 'Dynnr Type                              Description', ...rows].join('\n') }] };
+    const selNote = windowed.some(s => selectionScreenNote(s.type)) ? ['', 'Selection screens (S/J/W) are generated from the program source; change them with WriteProgram + selection texts, not ManageDynpro.'] : [];
+    return { isError: false, content: [{ type: 'text', text: [head, '', 'Dynnr Type                              Description', ...rows, ...selNote].join('\n') }] };
+}
+
+/** Pure: how a selection screen is changed — it is generated from the program source. */
+export function selectionScreenNote(type: string): string {
+    return ['S', 'J', 'W'].includes(String(type).toUpperCase())
+        ? 'Generated selection screen: it comes from SELECTION-SCREEN / PARAMETERS / SELECT-OPTIONS in the program source. '
+          + 'Change it in the source with WriteProgram and its labels as selection texts (WriteProgram selection_texts, '
+          + 'TextPoolLang for other languages); SAP regenerates the screen on activation. ManageDynpro refuses selection screens.'
+        : '';
 }
 
 function renderScreen(d: any): string {
@@ -110,6 +127,9 @@ function renderScreen(d: any): string {
     if (h.cursor_pos) attrs.push(`Cursor: ${h.cursor_pos}`);
     if (h.screen_grp) attrs.push(`Screen group: ${h.screen_grp}`);
     lines.push(attrs.join(' | '));
+    // A plan-eval run (2026-10-19) planned ManageDynpro update on a type-J screen it had read here.
+    const selNote = selectionScreenNote(h.type);
+    if (selNote) lines.push(selNote);
     // SE51 "Settings" checkboxes + context menu FORM (RPY_DYHEAD flags)
     const settings = SETTING_FLAGS.filter(([field]) => h[field] === 'X').map(([, label]) => label);
     if (h.ctx_menon) settings.push(`Context menu FORM ON_CTMENU_${h.ctx_menon}`);

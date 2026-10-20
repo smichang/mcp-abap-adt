@@ -8,7 +8,8 @@ import { checkSourceInContext, formatSyntaxMessages } from '../lib/syntaxCheck';
 // counterpart of WriteProgram's check_only (which needs the new source passed in). Reads
 // {object}/source/main (SAP returns the inactive working version when one exists, otherwise the
 // active one) and feeds it to the same stateless checkrun used before a write. No lock, no write.
-// Includes are checked without their master program, so a false error is possible there.
+// An include is checked in its master program's context (checkSourceInContext); with no master known it
+// is checked alone and the output says so.
 export async function handleCheckSyntax(args: any) {
     try {
         const objectName = args?.object_name ? String(args.object_name).toUpperCase().trim() : '';

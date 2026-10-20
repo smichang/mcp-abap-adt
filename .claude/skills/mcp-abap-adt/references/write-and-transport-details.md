@@ -10,7 +10,7 @@ For an *existing* object outside `$TMP`:
 
 ```
 SearchObject / GetCode resource=OBJECT      read the current active source
-UnlockObject object_name=…                  is it already in an open request?
+GetMeta TRANSPORT object_name=…            is it already in an open request? (no lock)
 ManageTransport action=create               only if it reported none
 WriteProgram transport_number=…             write + activate
 RunATCCheck on the transport                before handover
@@ -21,12 +21,12 @@ ManageTransport action=release              only when explicitly asked
 locked under (SAP would otherwise *silently* move the object between requests). Create first
 and get refused, and you leave an empty duplicate request behind.
 
-**Use `UnlockObject`, not `GetMeta resource=TRANSPORT`, for the check.** The transport list
-defaults to the connection's own user and shows headers only, so an object sitting in
-*another user's* request reads as "no open transport". `UnlockObject` takes a real ADT lock
-and reads `CORRNR`/`CORRTEXT` from the lock result — a property of the object's own CTS
-registration, not filtered by who asks — then releases the lock again. Its report names the
-request you can pass straight to `WriteProgram`.
+**Use `GetMeta resource=TRANSPORT object_name=…` for the check** (optional `type_hint`). It is a
+read-only ADT `transportchecks` call: **no lock**, so it is safe on a colleague's object, and it
+reports the CTS holder whoever asks: `LOCAL` / `FREE` / `HELD_BY_SELF` / `HELD_BY_OTHER` with the
+holder's request, task and owner (or your own open requests when free). Pass that request to
+`WriteProgram`. The plain transport list (no `object_name`) shows the connection's own user's
+headers only, and `UnlockObject` takes a real lock — do not probe with either.
 
 **Cleanup after a refused write.** The refusal names the right request (`existingCorrNr` /
 `existingCorrText`). The one you just created is an empty orphan: delete it with
