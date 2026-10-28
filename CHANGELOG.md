@@ -5,6 +5,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-10-28
+
+### Added
+- **`ManageObject resource=TRANSACTION`** creates, updates and deletes custom SE93 transaction codes (dialog or report, Y/Z). ADT can only read them, so it runs through a new standalone SICF endpoint `default_host/zaimcp/transaction` (`ZCL_HTTP_TRANSACTION`, package `ZAIMCP`): create wraps `RPY_TRANSACTION_INSERT`, delete wraps `RPY_TRANSACTION_DELETE`, update (no SAP FM exists) writes `TSTC`/`TSTCT`/`TSTCC` behind `RS_ACCESS_PERMISSION`/`RS_CORR_INSERT`. Trap found live: `RS_CORR_INSERT` without `devclass` opens a package dialog and dumps in an HTTP session, so the package is read from `TADIR` and `$` packages skip registration. Live-verified in `$TMP`.
+
+### Changed
+- **Breaking: `ManageAuthObject`, `ManageMessageClass`, `ManagePackage` and `ManageTransaction` are now one tool, `ManageObject`**, with `resource` = `AUTH_OBJECT`, `MESSAGE_CLASS`, `PACKAGE` or `TRANSACTION`. It forwards to the unchanged handlers, so behaviour and parameters are as before. `ManageDDIC`, `ManageDynpro`, `ManageTransport`, `ManageSessions` and `ManageSicfNode` stay separate. Clients and allowlists that name the old tools must be updated. The `CLAUDE.md` rule that writes keep their own top-level tool now has this one exception.
+- pcg-abaper skill 2.39: tool names follow the `ManageObject` merge; routing row for SE93 transaction codes.
+
 ## [3.12.0] - 2026-10-27
 
 ### Added

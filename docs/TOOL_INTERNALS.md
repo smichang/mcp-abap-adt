@@ -245,6 +245,12 @@ Transport responses use `tm:` (`xmlns:tm="http://www.sap.com/cts/adt/tm"`); pars
 
 ---
 
+## ManageObject dispatcher (2026-10-28)
+
+`ManageObject` replaced the standalone tools `ManageAuthObject`, `ManageMessageClass`, `ManagePackage` and `ManageTransaction`. `handleManageObject.ts` strips `resource` (`AUTH_OBJECT`, `MESSAGE_CLASS`, `PACKAGE`, `TRANSACTION`) and forwards to the unchanged handler; an unknown `resource` throws `McpError(InvalidParams)`. The tool schema is built in `manageObjectSchema.ts` from the four original definitions: shared parameter names (`action`, `description`, `package_name`, `transport_number`) keep one shape, their `enum`s are unioned, and each description is tagged `[RESOURCE]`. Per-resource required parameters are validated by the handlers, not the schema. The sections below keep the old tool names as headings.
+
+---
+
 ## ManageAuthObject Tool
 
 Creates/updates a custom **SU21 Authorization Object** and its fields. SU21 has no ADT/REST surface at all, so this is a standalone SICF service (`default_host/zmcp/auth_object`, `ZCL_HTTP_MCP_AUTH_OBJECT`, package `ZMCP`) wrapping SU21's real engine class `CL_SUSO_APPL` directly. TypeScript: `handleManageAuthObject.ts`, POSTing `mode`(`create`/`update`)/`object_class`/`object_name`/`description`/`devclass`/`trkorr` with a comma-separated field list as the body; plain-text response.
@@ -266,6 +272,19 @@ Message class `ZMCP_AUTH_OBJECT` doesn't exist, so `map_exception` builds error 
 **Live-verified 2026-10-12 on a clean system** with the permanent anchor object `ZMCP_E2E01` (class `BC_Z`, package `ZMCP`, in the transport used for the endpoint install; SU21 objects cannot be deleted, so it stays and is reused by the tests): `create` with fields `BUKRS`+`ACTVT` and activities `02,03` wrote `TOBJ`, `TOBJT`, `TACTZ` and a `TADIR` `SUSO` entry, all read back; `update` of the description alone left fields and activities untouched; `update` of the activities (`02,03,06`) changed only `TACTZ`; adding a field (`WERKS`) without `permitted_activities` kept the existing activity list; a duplicate `create` was refused (`already exists`); once a throwaway `$TMP` program used the object in an `AUTHORITY-CHECK`, a field-list change was refused (`field edit mode 03`, "Nothing was saved") while description and activities were still changeable. **Trap:** on `update` the field list is *replaced*, so a partial list silently drops the other fields (an early version of the test cut the anchor down to `ACTVT`; it was restored). The tests therefore send negative cases only as `create` calls with a short name and the nonexistent class `ZZZZ`.
 
 ---
+
+---
+
+## ManageTransaction Tool
+
+Creates, updates and deletes custom **SE93 transaction codes** (`TSTC`/`TSTCT`/`TSTCC`). ADT only reads transactions, so this is a standalone SICF service (`default_host/zaimcp/transaction`, `ZCL_HTTP_TRANSACTION`, package `ZAIMCP`). TypeScript: `handleManageTransaction.ts`, POSTing `action`/`tcode`/`program`/`dynpro`/`description`/`type`/`devclass`/`trkorr`/`web_gui`/`java_gui`/`win_gui`; plain-text response (201 created, 200 updated/deleted).
+
+- **create** wraps `RPY_TRANSACTION_INSERT` (dialog `D` needs program + screen; report `R` forces screen 1000), then `COMMIT WORK`. Program must exist in `TRDIR`.
+- **delete** wraps `RPY_TRANSACTION_DELETE` (removes TSTC/TSTCT/TSTCP/TSTCA/TSTCC and the USOB* auth defaults). Roles that still list the tcode are not touched.
+- **update** has no SAP FM: `RS_ACCESS_PERMISSION` (MODIFY) → `RS_CORR_INSERT` → direct `UPDATE` of `TSTC` (program, screen), `TSTCT` (text, logon language) and `TSTCC` (GUI flags), then FREE + `COMMIT WORK`. Only passed fields change; GUI flag `false` is sent as `N`.
+- **Trap (found live 2026-10-28):** `RS_CORR_INSERT` without `devclass` opens the package dialog, which dumps in an HTTP session (`DYNPRO_SEND_IN_BACKGROUND`, `SAPLSTRD`) and answers with an HTML error page. The handler reads `devclass` from `TADIR` and skips registration for `$` packages.
+- Not supported: parameter / variant / OO transactions, translations of the text, creating in a non-`Y`/`Z` namespace.
+- Name is validated in TS and again in ABAP (Y/Z, ≤ 20).
 
 ---
 

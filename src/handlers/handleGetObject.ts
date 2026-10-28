@@ -235,7 +235,7 @@ const READ_ELSEWHERE: Record<string, string> = {
     MSAG: 'a message class: GetMeta resource=MESSAGE_CLASS message_class=<name>',
     TRAN: 'a transaction: GetMeta resource=TRANSACTION transaction_name=<name>',
     ENHS: 'an enhancement spot: GetCode resource=ENHANCEMENTS object_name=<name>',
-    SUSO: 'an authorization object: DataPreview on TOBJ (fields) / TACTZ (activities); ManageAuthObject maintains it',
+    SUSO: 'an authorization object: DataPreview on TOBJ (fields) / TACTZ (activities); ManageObject resource=AUTH_OBJECT maintains it',
     WAPA: 'a BSP/UI5 web application: not readable through this gateway (its OData service is a separate object)',
     SICF: 'an ICF service node: not readable through this gateway',
 };

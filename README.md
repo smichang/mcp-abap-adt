@@ -14,7 +14,7 @@ This project exists for three goals:
    | Stage | Tools |
    |---|---|
    | Discover & read | `SearchObject`, `GetCode` (source, versions, enhancements, where-used, screens), `GetMeta` (packages, types, transactions, transports, message classes, DDIC, inactive objects), `DataPreview` |
-   | Create & change | `WriteProgram` (programs, includes, classes and their local test/definition includes, interfaces, function groups/modules, text elements; patch mode via `edits[]`), `ManageDDIC`, `ManageMessageClass`, `ManageDynpro`, `ManageAuthObject`, `ManagePackage`, `TextPoolLang` |
+   | Create & change | `WriteProgram` (programs, includes, classes and their local test/definition includes, interfaces, function groups/modules, text elements; patch mode via `edits[]`), `ManageDDIC`, `ManageObject` (`resource` = `AUTH_OBJECT` / `MESSAGE_CLASS` / `PACKAGE` / `TRANSACTION`), `ManageDynpro`, `TextPoolLang` |
    | Transport | `ManageTransport` (create, rename, assign, move, merge, release, delete) |
    | Activate | `ActivateObjects` (mass activation, RFC toggle) |
    | Test & quality | `RunUnitTest`, `RunATCCheck` (objects, packages, worklists), `RunABAP` (run a class or report, get its output), `GetCode resource=SYNTAX` |
@@ -41,7 +41,7 @@ This project exists for three goals:
 
 - Never commit `.env`, SAP passwords, OAuth tokens, API keys, or other credentials.
 - Do not put SAP credentials in `opencode.json`.
-- Treat `WriteProgram`, `ManageDDIC`, `ActivateObjects`, `ManageTransport`, `TextPoolLang` (`action=write`), `ManageSicfNode` (`action=create_sicf_node`/`delete_sicf_node`), `ManageAuthObject`, `ManageDynpro`, `ManageMessageClass`, and `DeleteObject` as write-capable operations.
+- Treat `WriteProgram`, `ManageDDIC`, `ActivateObjects`, `ManageTransport`, `TextPoolLang` (`action=write`), `ManageSicfNode` (`action=create_sicf_node`/`delete_sicf_node`), `ManageObject resource=AUTH_OBJECT`, `ManageDynpro`, `ManageObject resource=MESSAGE_CLASS`, and `DeleteObject` as write-capable operations.
 - `DeleteObject` is destructive and hard to reverse — treat it with extra caution beyond the other write-capable tools.
 - Prefer read-only tools when exploring production systems.
 - Do not enable automatic approval for write-capable tools unless your local policy allows it.
@@ -141,7 +141,7 @@ Use the mcp-abap-adt MCP server and search for ABAP object SAPMV45A.
 
 ## 3. Optional: ABAP-side Endpoints
 
-A few tools (`ManageAuthObject`, `ManageDynpro`, `TextPoolLang`, `ManageSicfNode`, `ManageSessions`, `UnlockObject force=true`, and the `move_object`/`merge`/`remove_object` actions of `ManageTransport`) cover things standard ADT does not expose. They call small custom SICF services whose source is in [`abap-tasks/`](abap-tasks). To use them, follow [`abap-tasks/README.md`](abap-tasks/README.md): package `ZMCP`, one manual SICF step, after which the AI installs the rest under `default_host/zmcp`; every other tool works against stock ADT.
+A few tools (`ManageObject` for `AUTH_OBJECT`/`TRANSACTION`, `ManageDynpro`, `TextPoolLang`, `ManageSicfNode`, `ManageSessions`, `UnlockObject force=true`, and the `move_object`/`merge`/`remove_object` actions of `ManageTransport`) cover things standard ADT does not expose. They call small custom SICF services whose source is in [`abap-tasks/`](abap-tasks). To use them, follow [`abap-tasks/README.md`](abap-tasks/README.md): package `ZMCP`, one manual SICF step, after which the AI installs the rest under `default_host/zmcp`; every other tool works against stock ADT.
 
 ## Agent Skill
 
@@ -200,7 +200,8 @@ The server exposes tools for:
 - Creating or updating DDIC structures, table types, data elements, domains, and CDS view entities via their native ADT contracts.
 - Reading and writing a program's text pool (symbols, selections, headings, title) in an explicit target language, independent of the object's master language.
 - Creating or deleting a custom SICF node under `default_host/zmcp`.
-- Creating or updating a custom SU21 Authorization Object and its fields, including `ACTVT` with its permitted activities (SU21 has no native ADT surface, so this goes through its own standalone endpoint under `default_host/zmcp`). Define the full field list before any code checks the object: SU21 locks the fields once the object is in use.
+- Creating or updating a custom SU21 Authorization Object (`ManageObject resource=AUTH_OBJECT`) and its fields, including `ACTVT` with its permitted activities (SU21 has no native ADT surface, so this goes through its own standalone endpoint under `default_host/zaimcp`). Define the full field list before any code checks the object: SU21 locks the fields once the object is in use.
+- Creating, updating or deleting a custom transaction code (SE93), dialog or report, in the Y/Z namespace (`ManageObject resource=TRANSACTION`; ADT can only read transactions, so this goes through its own standalone endpoint under `default_host/zaimcp`).
 - Deleting an ABAP repository object (program, include, class, function module, ...) outright, with a lock/unlock cycle and CTS transport handling.
 - Reading and writing classic SAP GUI screens (Dynpro) of customer programs: list a program's screens, read a screen's attributes, elements and flow logic, and create/update/delete a screen — including SE51's Attributes tab (screen type, next screen, Settings checkboxes) — with SE51's consistency check after every write. Standard ADT has no screen contract, so this goes through its own standalone endpoint under `default_host/zmcp`.
 

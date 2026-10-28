@@ -17,7 +17,6 @@ import { handleDataPreview } from './handlers/handleDataPreview';
 import { handleManageTransport } from './handlers/handleManageTransport';
 import { handleManageDDIC } from './handlers/handleManageDDIC';
 import { handleManageDynpro } from './handlers/handleManageDynpro';
-import { handleManageMessageClass } from './handlers/handleManageMessageClass';
 import { handleWriteProgram } from './handlers/handleWriteProgram';
 import { handleGetCode } from './handlers/handleGetCode';
 import { handleGetDiagnostics } from './handlers/handleGetDiagnostics';
@@ -27,12 +26,12 @@ import { handleRunATCCheck } from './handlers/handleRunATCCheck';
 import { handleRunUnitTest } from './handlers/handleRunUnitTest';
 import { handleUnlockObject } from './handlers/handleUnlockObject';
 import { handleRunABAP } from './handlers/handleRunABAP';
-import { handleManagePackage } from './handlers/handleManagePackage';
 import { handleManageSessions } from './handlers/handleManageSessions';
 import { handleDeleteObject } from './handlers/handleDeleteObject';
 import { handleTextPoolLang } from './handlers/handleTextPoolLang';
 import { handleManageSicfNode } from './handlers/handleManageSicfNode';
-import { handleManageAuthObject } from './handlers/handleManageAuthObject';
+import { handleManageObject } from './handlers/handleManageObject';
+import { manageObjectTool } from './handlers/manageObjectSchema';
 import { backgroundSchemaProps } from './lib/background';
 
 // Import shared utility functions and types
@@ -725,38 +724,6 @@ export class mcp_abap_adt_server {
             }
           },
           {
-            name: 'ManageMessageClass',
-            description: 'Create, update or delete an ABAP message class (SE91) and its messages via the native ADT contract. Read messages with GetMeta resource=MESSAGE_CLASS (optional `language` reads a translation). action=create: description + package_name required, optional initial messages. action=update: messages are inserted or overwritten by number in ONE language (all other messages and languages untouched) — the class\'s master language by default, or `language` (ISO, e.g. EN) to write a translation of messages that exist in the master; delete_messages removes individual messages in all languages; replace_all=true makes messages the complete new list (every other message is deleted); description optionally renames. action=delete: deletes the whole message class. create outside $TMP needs transport_number or transport_description; update/delete without transport_number reuse the request the class is already in; a transport differing from that one is refused. Message long texts cannot be written (ADT exposes no long-text write on this release) — maintain them in SE91; this tool never deletes an existing long text.',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                action: { type: 'string', enum: ['create', 'update', 'delete'], description: 'create, update or delete' },
-                message_class: { type: 'string', description: 'Message class name, customer namespace (Z*/Y*), max 20 characters. Example: ZSD_MESSAGES' },
-                description: { type: 'string', description: 'Short text, max 60 characters. Required for create; optional on update (renames).' },
-                package_name: { type: 'string', description: 'create only (required). Package, e.g. $TMP or ZSD. Also the DEVCLASS for transport_description.' },
-                messages: {
-                  type: 'array',
-                  description: 'create/update. Messages to write; on update each is inserted or overwritten by number.',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      number: { type: 'string', description: 'Message number 000-999 (e.g. "001" or 1)' },
-                      text: { type: 'string', description: 'Message text, max 73 characters. Use &1..&4 (or &) as placeholders.' },
-                      self_explanatory: { type: 'boolean', description: 'SE91 "Self-Explanatory" flag. New messages default to true; when overwriting an existing message, omitting it keeps the current flag.' }
-                    },
-                    required: ['number', 'text']
-                  }
-                },
-                language: { type: 'string', description: 'Optional 2-character ISO language code (EN, DE, ZF, ...) the message texts are written in. Default: the class\'s master language (T100A). A different language writes a translation; the message must already exist in the master language. On create it sets the master language (default EN).' },
-                delete_messages: { type: 'array', items: { type: 'string' }, description: 'update only. Message numbers to delete (e.g. ["001","010"]). Deletes the message in ALL languages, with its long text. Every number must exist, otherwise nothing is changed. Not combinable with a translation `language`.' },
-                replace_all: { type: 'boolean', description: 'update only. true = messages is the complete new list; every existing message not in it is deleted. Default false (upsert). Not combinable with delete_messages.' },
-                transport_number: { type: 'string', description: 'Transport request/task. Required for create outside $TMP unless transport_description is given; on update/delete it may be omitted to reuse the request the class is already in.' },
-                transport_description: { type: 'string', description: 'Creates a new transport with this description (max 60 chars) instead of transport_number. Needs package_name.' }
-              },
-              required: ['action', 'message_class']
-            }
-          },
-          {
             name: 'ManageDynpro',
             description: 'Create, update, delete or consistency-check a classic SAP GUI screen (Dynpro) of a customer program (Z*/Y*/SAPLZ*/SAPLY*). Read screens first with GetCode resource=DYNPRO (raw=true gives the JSON definition this tool takes). The write is generated immediately — the screen is active, no ActivateObjects step. Refused with nothing saved: generation errors (e.g. FIELD of an undefined variable), a subscreen area without CALL SUBSCREEN in PBO and PAI, selection screens (they come from SELECTION-SCREEN statements), and — for non-$TMP programs — a missing transport_number or one different from the open request already holding the screen. After every successful write SE51\'s consistency check runs: a MODULE the program does not define etc. is reported as an error (isError) although the screen IS saved — add the MODULE with WriteProgram, then action=check (or write the program first). Other findings are listed as warnings.',
             inputSchema: {
@@ -842,28 +809,6 @@ export class mcp_abap_adt_server {
                 max_chars: { type: 'integer', description: 'Output cap in characters (default 20000).' }
               },
               required: ['object_name']
-            }
-          },
-          {
-            name: 'ManagePackage',
-            description: 'Create or update an ABAP package (DEVC) over the native ADT package contract. action=create: package_name, description (<=60), software_component (default LOCAL for $ packages), transport_number (required unless $), optional super_package, responsible (default: the connection user), package_type (development|structure|main), transport_layer, application_component, record_changes. action=update: changes only the fields you pass (description, software_component, transport_layer, application_component, super_package) via lock -> PUT -> unlock; refuses to move the package into a different request. Delete a package with DeleteObject.',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                action: { type: 'string', enum: ['create', 'update'] },
-                package_name: { type: 'string', description: 'Z*/Y*/$*/namespaced, max 30 chars.' },
-                description: { type: 'string' },
-                software_component: { type: 'string' },
-                transport_layer: { type: 'string' },
-                application_component: { type: 'string' },
-                super_package: { type: 'string' },
-                package_type: { type: 'string', enum: ['development', 'structure', 'main'] },
-                master_language: { type: 'string', description: 'Default EN.' },
-                responsible: { type: 'string' },
-                record_changes: { type: 'boolean' },
-                transport_number: { type: 'string', description: 'Change request for a transportable package.' }
-              },
-              required: ['action', 'package_name']
             }
           },
           {
@@ -1005,57 +950,7 @@ export class mcp_abap_adt_server {
               required: ['action']
             }
           },
-          {
-            name: 'ManageAuthObject',
-            description: 'Create or update a custom SU21 authorization object: its class, description, up to 10 fields, and the permitted activities for ACTVT. Runs through the custom endpoint /zmcp/auth_object, because SU21 has no ADT API. No delete. update changes only what you pass and keeps the rest. Input is validated before anything is saved. Once the object is in use (an AUTHORITY-CHECK in code, roles, transactions or DCL), SU21 locks its field list: field changes are refused with 409 and nothing is saved, while class, description and activities can still change. To change the fields, first remove that usage; there is no bypass.',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                action: {
-                  type: 'string',
-                  description: '"create" or "update".',
-                  enum: ['create', 'update']
-                },
-                object_name: {
-                  type: 'string',
-                  description: 'e.g. "Z_CO_IMG". Y/Z namespace, max 10 characters.'
-                },
-                object_class: {
-                  type: 'string',
-                  description: 'An existing object class, e.g. "FI", "ZFI" (max 4 chars). Required on create; optional on update to change the class.'
-                },
-                description: {
-                  type: 'string',
-                  description: 'Required on create; optional on update.'
-                },
-                fields: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      field_name: { type: 'string', description: 'An existing SU20 field, e.g. "BUKRS", "ACTVT". Max 10 characters.' },
-                      permitted_activities: {
-                        type: 'array',
-                        items: { type: 'string' },
-                        description: 'ACTVT entry only, e.g. ["02","03"] (codes from TACT). Required on create; on update, omit to keep the current list or give one to replace it.'
-                      }
-                    },
-                    required: ['field_name']
-                  },
-                  description: 'Up to 10 entries. On update this replaces the whole field list; omit it to keep the current fields.'
-                },
-                package_name: {
-                  type: 'string',
-                  description: 'Package, required on create.'
-                },
-                transport_number: {
-                  type: 'string',
-                  description: 'Optional. If omitted, SAP uses the open request that already holds the object.'
-                }
-              },
-              required: ['action', 'object_name']
-            }
-          },
+          manageObjectTool,
           {
             name: 'RunATCCheck',
             description: 'Run an ABAP Test Cockpit (ATC) code-quality check and return the findings (errors/warnings/notes with location and message). Pass EXACTLY ONE target: transport_numbers (one or more transport requests), objects (object or PACKAGE names — a package checks everything inside it; up to 20), or worklist_id (re-read an earlier run\'s findings with no new ATC run — use it to page large results). Every report states its worklist id and pages with offset/limit (default 200 findings; the footer gives the exact next call). Each transport is validated to exist before running — a nonexistent transport is reported as missing rather than silently returning 0 findings. By default, findings are scoped to the transport\'s own objects (scope="transport") — ATC checks the whole compilation unit (e.g. an entire function group for one changed FM), so unfiltered results can bury a small delta under hundreds of pre-existing findings on untouched sibling objects. For MCP clients with a short request timeout, set background=true to return instantly and have the findings written to a file.',
@@ -1143,12 +1038,12 @@ export class mcp_abap_adt_server {
           return await handleDataPreview(request.params.arguments);
         case 'ManageTransport':
           return await handleManageTransport(request.params.arguments);
+        case 'ManageObject':
+          return await handleManageObject(request.params.arguments);
         case 'ManageDDIC':
           return await handleManageDDIC(request.params.arguments);
         case 'ManageDynpro':
           return await handleManageDynpro(request.params.arguments);
-        case 'ManageMessageClass':
-          return await handleManageMessageClass(request.params.arguments);
         case 'WriteProgram':
           return await handleWriteProgram(request.params.arguments);
         case 'GetCode':
@@ -1167,8 +1062,6 @@ export class mcp_abap_adt_server {
           return await handleManageSessions(request.params.arguments);
         case 'RunABAP':
           return await handleRunABAP(request.params.arguments);
-        case 'ManagePackage':
-          return await handleManagePackage(request.params.arguments);
         case 'UnlockObject':
           return await handleUnlockObject(request.params.arguments);
         case 'DeleteObject':
@@ -1178,8 +1071,6 @@ export class mcp_abap_adt_server {
 
         case 'ManageSicfNode':
           return await handleManageSicfNode(request.params.arguments);
-        case 'ManageAuthObject':
-          return await handleManageAuthObject(request.params.arguments);
         default:
           throw new McpError(
             ErrorCode.MethodNotFound,
