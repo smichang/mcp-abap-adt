@@ -117,7 +117,7 @@ capture the `entry_id` promptly.
 4. Don't re-create a name you just deleted in the same session: an ADT `DELETE` removes the
    object but not the enqueue entry its `LOCK` set, so the name stays locked by the orphaned
    session until it times out ("User … is currently editing …"). An explicit `UNLOCK` after
-   the delete releases it (`ManageMessageClass` does that). Use a new name for the next probe.
+   the delete releases it (`ManageObject MESSAGE_CLASS` does that). Use a new name for the next probe.
 
 ## 5. Slow calls and short-timeout clients
 

@@ -1,11 +1,11 @@
 ---
 name: mcp-abap-adt
 metadata:
-  version: "1.3"
+  version: "1.4"
 description: >-
   How to work on an SAP ABAP system through the mcp-abap-adt MCP server: find and
   read objects, change source safely (lock → write → unlock → activate), manage
-  transports, DDIC objects, message classes and screens, run ABAP Unit and ATC,
+  transports, DDIC objects, message classes, packages, auth objects, transaction codes and screens, run ABAP Unit and ATC,
   and debug lock/transport/activation problems. Use for any task that reads or
   changes ABAP objects via these MCP tools.
 ---
@@ -47,7 +47,7 @@ is not installed yet. Load other references only when the task needs them:
 
 ## Rules that prevent most failures
 
-- **Serialize lock-taking calls** (`WriteProgram`, `ManageDDIC`, `ManageMessageClass`,
+- **Serialize lock-taking calls** (`WriteProgram`, `ManageDDIC`, `ManageObject MESSAGE_CLASS`/`PACKAGE update`,
   `UnlockObject`, `DeleteObject`, `ManageTransport assign_object`, `ActivateObjects rfc_enabled`):
   they share one session cookie, so await each; reads may run in parallel.
 - **`Blocked: a stateful SAP MCP operation`** means another call holds the local gate; it never

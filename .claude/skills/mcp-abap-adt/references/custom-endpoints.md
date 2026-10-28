@@ -1,7 +1,7 @@
 # Building a custom ABAP-side endpoint — lessons for a real ADT gap
 
 Load when a capability has no ADT REST surface and you consider adding a tool backed by a
-standalone SICF service (the pattern behind `TextPoolLang`, `ManageAuthObject`,
+standalone SICF service (the pattern behind `TextPoolLang`, `ManageObject AUTH_OBJECT`/`TRANSACTION`,
 `ManageDynpro`, `ManageSicfNode`, `ManageSessions`, `UnlockObject force=true`, and the
 `move_object`/`merge`/`remove_object` actions of `ManageTransport`; sources in `abap-tasks/`).
 First make sure it is a *genuine* gap, not an inconvenient existing endpoint (§3).
@@ -110,7 +110,7 @@ First make sure it is a *genuine* gap, not an inconvenient existing endpoint (§
 ## 4. Language-keyed writes
 
 An ADT write that omits the target language does not fail — SAP fills the language key with blank.
-`ManageMessageClass` 3.4.0 never sent `adtcore:language`, so an English correction wrote every
+`ManageObject MESSAGE_CLASS` 3.4.0 never sent `adtcore:language`, so an English correction wrote every
 message of the class into `T100-SPRSL = ' '` while the tool reported "updated" (only the read-back
 warning hinted at it). The true state showed only in a `T100` query over **all** languages, not in a
 read of the target language. For any text object (messages, text pools, DDIC labels, documentation)

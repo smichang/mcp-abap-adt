@@ -51,7 +51,7 @@ object you are editing**.
   spool dialogs). Amounts/quantities need valid reference fields; one form ↔ one style.
 - Authorization: `AUTHORITY-CHECK` with the real `ACTVT` (not `DUMMY`) before sensitive
   actions; handle `sy-subrc <> 0` with a proper message. Create the authorization object
-  with its final field list *before* writing the check (see `ManageAuthObject`).
+  with its final field list *before* writing the check (see `ManageObject AUTH_OBJECT`).
 
 ## 4. Traps that bite on activation or at runtime
 

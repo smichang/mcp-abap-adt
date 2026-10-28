@@ -131,7 +131,7 @@ save, or an unlock for the wrong flow.
 
 - Treat each lock-taking tool call as one critical section including its activation/unlock
   tail: `WriteProgram` (also text-element writes), `ManageDDIC` create/update,
-  `ManageMessageClass` (every action), `ManageTransport assign_object`,
+  `ManageObject MESSAGE_CLASS` (every action) and `PACKAGE update`, `ManageTransport assign_object`,
   `ActivateObjects rfc_enabled`, `UnlockObject`, `DeleteObject`. Do not use `Promise.all`,
   parallel sub-agents, batched concurrent tool calls, or a background wrapper for them.
 - **Only the parent/orchestrating agent calls mutation tools.** Sub-agents may run read-only
