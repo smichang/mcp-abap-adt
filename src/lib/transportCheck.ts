@@ -72,7 +72,7 @@ export function parseTransportCheck(xml: string): TransportCheck {
 }
 
 export function verdictOf(check: TransportCheck, currentUser: string): TransportVerdict {
-    if (!check.recording) return 'LOCAL';
+    if (!check.recording && !check.holders.length) return 'LOCAL';   // a held object answers RECORDING='' too
     if (!check.holders.length) return 'FREE';
     const me = currentUser.toUpperCase();
     return check.holders.every(h => h.request.owner.toUpperCase() === me || h.tasks.some(t => t.owner.toUpperCase() === me))
@@ -98,7 +98,41 @@ export async function fetchTransportCheck(baseUrl: string, objectUri: string, de
     if (check.recording && !check.holders.length && check.pgmid === 'LIMU' && check.objectType === 'FUNC') {
         await addFunctionModuleLocks(baseUrl, objectUri, check);
     }
+    const grp = objectUri.match(/^\/sap\/bc\/adt\/functions\/groups\/([^/?]+)\/?$/);
+    if (grp && !check.holders.length) await addFunctionGroupLocks(baseUrl, decodeURIComponent(grp[1]).toUpperCase(), check);
     return check;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Function-group locks. transportchecks reports none for a function group either (found 2026-10-27, ZBASIS):
+// the group is "held" by every request that carries one of its function modules, and SAP then refuses to delete
+// a member from any OTHER request ("R3TR FUGR ZBASIS is already locked in request …"). A new function module
+// therefore belongs in the request that already holds its group's other modules; the holders are read from TLOCK.
+
+async function addFunctionGroupLocks(baseUrl: string, group: string, check: TransportCheck): Promise<void> {
+    if (!SAFE_NAME.test(group)) return;
+    try {
+        const rows = groupLockRows(group, await freestyleRows(baseUrl,
+            `SELECT TRKORR, AUTHOR, LOKEY FROM TLOCK WHERE OBJECT = 'FUGR' AND LOKEY LIKE '${group} %'`));
+        const holders = await holdersOfLockRows(baseUrl, rows);
+        if (!holders.length) return;
+        check.holders = holders;
+        check.recording = true;
+        check.messages.push(`Holder(s) read from TLOCK (function group ${group}): ADT transportchecks does not report function-group locks.`);
+    } catch (e: any) {
+        check.messages.push(`Function-group lock lookup in TLOCK failed (${e?.message || e}) — FREE is unverified for this group.`);
+    }
+}
+
+async function holdersOfLockRows(baseUrl: string, locks: Record<string, string>[]): Promise<CtsLockHolder[]> {
+    const tasks = [...new Set(locks.map(l => l.TRKORR).filter(t => SAFE_NAME.test(t)))];
+    if (!tasks.length) return [];
+    const sel = `SELECT E070~TRKORR, E070~STRKORR, E070~AS4USER, E070~TRSTATUS, E070~TARSYSTEM, E07T~AS4TEXT ` +
+        `FROM E070 LEFT OUTER JOIN E07T ON E07T~TRKORR = E070~TRKORR WHERE E070~TRKORR IN `;
+    const taskRows = await freestyleRows(baseUrl, `${sel}(${tasks.map(t => `'${t}'`).join(',')})`);
+    const parents = [...new Set(taskRows.map(r => r.STRKORR).filter(p => p && SAFE_NAME.test(p)))];
+    const parentRows = parents.length ? await freestyleRows(baseUrl, `${sel}(${parents.map(p => `'${p}'`).join(',')})`) : [];
+    return locksToHolders(locks, [...taskRows, ...parentRows]);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -121,13 +155,9 @@ export function parsePreviewRows(xml: string): Record<string, string>[] {
         Object.fromEntries(columns.map(c => [c.name, (c.values[i] ?? '').trim()])));
 }
 
-/** Pure: TLOCK rows for the FM + E070/E07T rows for the tasks and their requests → lock holders. */
-export function fmLockHolders(group: string, fm: string, lockRows: Record<string, string>[],
-                              requestRows: Record<string, string>[]): CtsLockHolder[] {
-    const wanted = `${group} FUNC${fm}`;
-    const taskNumbers = [...new Set(lockRows
-        .filter(r => (r.LOKEY || '').replace(/\s+/g, ' ').trim() === wanted)
-        .map(r => r.TRKORR).filter(Boolean))];
+/** Pure: task numbers of the given TLOCK rows + E070/E07T rows for the tasks and their requests → lock holders. */
+export function locksToHolders(lockRows: Record<string, string>[], requestRows: Record<string, string>[]): CtsLockHolder[] {
+    const taskNumbers = [...new Set(lockRows.map(r => r.TRKORR).filter(Boolean))];
     const byNumber = new Map<string, CtsHeader & { parent: string }>();
     for (const r of requestRows) {   // E07T is joined per language: keep the first non-empty text
         const known = byNumber.get(r.TRKORR);
@@ -147,6 +177,18 @@ export function fmLockHolders(group: string, fm: string, lockRows: Record<string
         holders.set(requestNumber, holder);
     }
     return [...holders.values()];
+}
+
+/** Pure: TLOCK rows for the FM + E070/E07T rows for the tasks and their requests → lock holders. */
+export function fmLockHolders(group: string, fm: string, lockRows: Record<string, string>[],
+                              requestRows: Record<string, string>[]): CtsLockHolder[] {
+    const wanted = `${group} FUNC${fm}`;
+    return locksToHolders(lockRows.filter(r => (r.LOKEY || '').replace(/\s+/g, ' ').trim() === wanted), requestRows);
+}
+
+/** Pure: TLOCK rows of one function group (any FM or include of it) — the LOKEY starts with the group padded to 26. */
+export function groupLockRows(group: string, lockRows: Record<string, string>[]): Record<string, string>[] {
+    return lockRows.filter(r => (r.LOKEY || '').substring(0, 26).trim().toUpperCase() === group.toUpperCase());
 }
 
 const SAFE_NAME = /^[A-Z0-9_/]+$/;

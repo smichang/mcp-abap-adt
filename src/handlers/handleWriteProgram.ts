@@ -1,7 +1,8 @@
 import { McpError, ErrorCode } from '../lib/utils';
 import { isDifferentChange } from '../lib/transportCheck';
 import { makeAdtRequest, return_error, getBaseUrl, parseAdtErrorXml, appendCookie, removeCookie } from '../lib/utils';
-import { getExistingTasks } from './handleManageTransport';
+import { getExistingTasks, addTaskToTransport } from './handleManageTransport';
+import { resolveTransport, describeDecision } from '../lib/resolveTransport';
 import { acquireStatefulOperationLock, releaseStatefulOperationLock, refreshStatefulOperationToken } from '../lib/writeLock';
 import { getConfig } from '../index';
 import { AxiosError } from 'axios';
@@ -246,6 +247,9 @@ async function writeProgramCore(args: any) {
         let created = false;
         let effectiveTransportNumber = transportNumber; // may be filled in below by an auto-created, properly-described transport
         let autoCreatedTaskNumber = '';
+        let reusedExistingTransportNote = '';
+        let policyTransport = ''; // request chosen by the "one CR per goal" policy (shown as Transport:)
+        let crChoiceNote = ''; // which "one CR per goal" rule picked the transport (shown in the result)
 
         // Auto-detect object type (program, include, or function module) via search
         let objInfo = await resolveObjectInfo(String(baseUrl), programName);
@@ -336,6 +340,20 @@ async function writeProgramCore(args: any) {
             // Create the transport BEFORE the object itself, using a deferred (not-yet-existing)
             // object reference, so the create call below can pass corrNr and never trigger SAP's
             // own auto-generated "Generated Request for Change Recording" transport.
+            // "One CR per goal": before opening a new request, reuse the user's open CR or join the CR that
+            // already holds the function group (lib/resolveTransport.ts).
+            if (!effectiveTransportNumber && transportDescription && !packageName.startsWith('$')) {
+                const ref = objectType === 'FUNC'
+                    ? `/sap/bc/adt/functions/groups/${encodeURIComponent(functionGroup.toLowerCase())}/fmodules/${encodeURIComponent(programName)}`
+                    : `/sap/bc/adt/${(CREATION_TYPES[objectType] || CREATION_TYPES['PROG']).creationPath}/${encodeURIComponent(programName)}`;
+                const choice = await chooseTransport(String(baseUrl), objectType === 'FUNC'
+                    ? [ref, `/sap/bc/adt/functions/groups/${encodeURIComponent(functionGroup.toLowerCase())}`] : [ref], packageName, transportDescription);
+                if (choice.error) return { isError: true, content: [{ type: 'text', text: choice.error }] };
+                if (choice.number) effectiveTransportNumber = choice.number;
+                if (choice.taskNumber) autoCreatedTaskNumber = choice.taskNumber;
+                crChoiceNote = choice.note;
+                if (choice.number) reusedExistingTransportNote = choice.note; // a reused CR, not an auto-created one
+            }
             if (!effectiveTransportNumber && transportDescription) {
                 const deferredRef = objectType === 'FUNC'
                     ? `/sap/bc/adt/functions/groups/${encodeURIComponent(functionGroup.toLowerCase())}/fmodules/${encodeURIComponent(programName)}`
@@ -404,6 +422,21 @@ async function writeProgramCore(args: any) {
 
         const objectUrl = `${baseUrl}${objInfo.uri}`;
         const sourceUrl = `${objectUrl}/source/main`;
+
+        // ── "One CR per goal" (existing object, no transport_number) ──
+        // Reuse the user's open CR / the CR already holding the object or its function group / join a
+        // colleague's CR with an own task. Done before the lock, so a refusal leaves nothing locked.
+        if (!created && !effectiveTransportNumber) {
+            const related = objInfo.uri.includes('/fmodules/') ? [objInfo.uri, objInfo.uri.replace(/\/fmodules\/.*$/, '')] : [objInfo.uri];
+            const choice = await chooseTransport(String(baseUrl), related, '', transportDescription);
+            if (choice.error) return { isError: true, content: [{ type: 'text', text: `${choice.error}\nNothing was locked or written.` }] };
+            // The request number goes in as corrNr, also for an object already registered in it (live 2026-10-27: a
+            // request works, no corrNr is refused with "Parameter corrNr could not be found", the task number fails too).
+            if (choice.number) { policyTransport = choice.number; effectiveTransportNumber = choice.number; }
+            if (choice.taskNumber) autoCreatedTaskNumber = choice.taskNumber;
+            if (choice.note) crChoiceNote = choice.note;
+            if (choice.number) reusedExistingTransportNote = choice.note; // a reused CR, not an auto-created one
+        }
 
         // ── Step 1: Lock ──────────────────────────────────────────────
         let lockHandle: string;
@@ -474,7 +507,6 @@ async function writeProgramCore(args: any) {
         // request, SAP keeps using that one and no new CR is created.
         let previousSource: string | null = null; // what this write is about to replace (for the local snapshot)
         let snapshotNote = '';
-        let reusedExistingTransportNote = '';
         if (!created && !effectiveTransportNumber && transportDescription) {
             if (existingCorrNr) {
                 effectiveTransportNumber = existingCorrNr; // pass it as corrNr so SAP doesn't reject the PUT against its own registration
@@ -804,9 +836,10 @@ async function writeProgramCore(args: any) {
         if (created && objInfo.type === 'CLAS/OC' && /activation failed/i.test(activationResult)) {
             lines.push(`RECOVERY: This was the class's first activation. Correct the complete source and retry WriteProgram. If SAP rejects the overwrite, use SAP GUI/Eclipse ADT to remove the class's CTS/deletion entry from its change request, remove its inactive-object entry, then delete the repository object before recreating the name.`);
         }
-        if (effectiveTransportNumber) lines.push(`Transport: ${effectiveTransportNumber}${!transportNumber && transportDescription && !reusedExistingTransportNote ? ' (auto-created)' : ''}`);
+        if (effectiveTransportNumber) lines.push(`Transport: ${policyTransport || effectiveTransportNumber}${!transportNumber && transportDescription && !reusedExistingTransportNote ? ' (auto-created)' : ''}`);
         if (autoCreatedTaskNumber) lines.push(`Task: ${autoCreatedTaskNumber}`);
         if (reusedExistingTransportNote) lines.push(reusedExistingTransportNote);
+        if (crChoiceNote && crChoiceNote !== reusedExistingTransportNote) lines.push(crChoiceNote);
         if (snapshotNote) lines.push(snapshotNote);
         lines.push(sourceDiagnostics);
         if (patchSummary) lines.push(patchSummary);
@@ -1061,6 +1094,26 @@ async function discardAutoCreatedTransport(baseUrl: string, transportNumber: str
         if (error instanceof AxiosError && error.response?.data) reason = parseAdtErrorXml(String(error.response.data)) || reason;
         return `\nThe transport ${transportNumber} auto-created for this call could NOT be deleted (${reason}) — remove it with ManageTransport action=delete.`;
     }
+}
+
+// Applies the "one CR per goal" decision (lib/resolveTransport.ts) for a write. `number` is the request to
+// pass as corrNr; empty means "nothing to reuse" and the caller carries on as before (create / SAP picks).
+// Rule 3 also puts an own task into the colleague's CR; if SAP refuses that, the write stops — it must never
+// fall back to a parallel CR.
+async function chooseTransport(baseUrl: string, uris: string[], devclass: string, goalHint: string):
+    Promise<{ number?: string; taskNumber?: string; note: string; error?: string }> {
+    const me = getConfig().username.toUpperCase();
+    const d = await resolveTransport(baseUrl, uris, me, { devclass, goalHint });
+    const note = describeDecision(d);
+    if (d.kind === 'conflict') return { note, error: `Refusing to choose a change request: ${d.reason}` };
+    if (d.kind !== 'use') return { note: d.kind === 'unchecked' ? `CR choice skipped — ${d.reason}.` : '' };
+    let taskNumber: string | undefined;
+    if (d.needsOwnTask) {
+        const t = await addTaskToTransport(baseUrl, d.transportNumber, me);
+        if (t.error) return { note, error: `${d.reason}.\nCould not add your own task to that CR, and no parallel CR is opened. Ask its owner.\n${t.error}` };
+        taskNumber = t.taskNumber;
+    }
+    return { number: d.transportNumber, taskNumber, note: taskNumber ? `${note} — own task ${taskNumber} added.` : note };
 }
 
 export async function createTransportForObject(

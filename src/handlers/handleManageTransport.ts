@@ -2,6 +2,7 @@ import { McpError, ErrorCode } from '../lib/utils';
 import { makeAdtRequest, return_error, return_response, getBaseUrl, parseAdtErrorXml, appendCookie, removeCookie } from '../lib/utils';
 import { getConfig } from '../index';
 import { AxiosError } from 'axios';
+import { resolveTransport } from '../lib/resolveTransport';
 import { acquireStatefulOperationLock, refreshStatefulOperationToken, releaseStatefulOperationLock } from '../lib/writeLock';
 
 const TYPE_PREFIX: Record<string, string> = {
@@ -133,6 +134,18 @@ async function actionCreate(args: any, baseUrl: Buffer | string): Promise<any> {
     if (description.length > 60) throw new McpError(ErrorCode.InvalidParams, `description exceeds SAP limit of 60 characters (got ${description.length})`);
     if (!objectUrl)          throw new McpError(ErrorCode.InvalidParams, 'object_url (or object_type + object_name) is required for action=create');
     if (!devClass)           throw new McpError(ErrorCode.InvalidParams, 'dev_class is required for action=create');
+
+    // "One CR per goal": a new request is the last resort. If the object is already in a CR, or you
+    // already have an open one, say so instead of opening another (force_new=true opts out).
+    if (args.force_new !== true && !devClass.startsWith('$')) {
+        const d = await resolveTransport(String(baseUrl), [objectUrl], getConfig().username, { devclass: devClass, goalHint: description });
+        if (d.kind === 'conflict' || d.kind === 'use') {
+            const what = d.kind === 'use'
+                ? `Use ${d.transportNumber} instead (${d.reason}${d.needsOwnTask ? '; add your own task with action=add_task first' : ''}) — pass it as transport_number to the write, or WriteProgram picks it on its own.`
+                : d.reason;
+            return { isError: true, content: [{ type: 'text', text: `Not creating a new transport: ${what}\nOne change request per goal. If a separate CR is really intended, repeat with force_new=true. Nothing was created.` }] };
+        }
+    }
 
     const body = `<?xml version="1.0" encoding="UTF-8"?><asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
   <asx:values>

@@ -454,6 +454,10 @@ export class mcp_abap_adt_server {
                   type: 'string',
                   description: 'Development package (DEVCLASS). Required for action=create. Example: ZMYPACKAGE'
                 },
+                force_new: {
+                  type: 'boolean',
+                  description: 'action=create only. One change request per goal: by default create is REFUSED when the object is already in a CR, a colleague\'s CR holds it, or you already have an open CR (the refusal names the CR to use). true opens a separate CR anyway.'
+                },
                 transport_number: {
                   type: 'string',
                   description: 'Transport request number. Required for action=release, action=assign_object, action=set_text, action=delete, and action=add_task. For action=move_object, this is the MOVE TARGET — a task or request number (both accepted). For action=remove_object, this is the task/request CURRENTLY holding the object entry to remove. Example: DEVK900123'

@@ -273,7 +273,7 @@ describe('text pool in another language (TextPoolLang)', () => {
 
 describe('transport request (ManageTransport)', () => {
     it('R1. creates an empty request, renames it, finds it in the list, deletes it', async () => {
-        const created = mustOk(await handleManageTransport({ action: 'create', description: 'MCP OT e2e (disposable)', dev_class: 'ZMCP', object_url: '/sap/bc/adt/packages/zmcp_ot_none' }), 'create');
+        const created = mustOk(await handleManageTransport({ action: 'create', force_new: true, description: 'MCP OT e2e (disposable)', dev_class: 'ZMCP', object_url: '/sap/bc/adt/packages/zmcp_ot_none' }), 'create');
         const trkorr = created.match(/Transport ([A-Z0-9]{3}K\d+) created/)?.[1];
         expect(trkorr).toBeTruthy();
         try {

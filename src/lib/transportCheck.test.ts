@@ -8,7 +8,7 @@ let mockQueue: string[] = [];   // consumed first, one body per request, for mul
 jest.mock('./utils', () => ({ makeAdtRequest: jest.fn(async () => ({ data: mockQueue.length ? mockQueue.shift() : mockXml })) }));
 
 import { parseTransportCheck, verdictOf, matchesHolder, isDifferentChange, fetchTransportCheck,
-         parsePreviewRows, fmLockHolders } from './transportCheck';
+         parsePreviewRows, fmLockHolders, locksToHolders, groupLockRows } from './transportCheck';
 
 const H = (n: string, u: string, t = 'txt') => `<TRKORR>${n}</TRKORR><TRSTATUS>D</TRSTATUS><TARSYSTEM>/ZS4Q/</TARSYSTEM><AS4USER>${u}</AS4USER><AS4TEXT>${t}</AS4TEXT>`;
 const wrap = (rec: string, only: string, requests: string, locks: string) =>
@@ -94,5 +94,28 @@ describe('transportCheck', () => {
         expect(verdictOf(c, 'SSCR')).toBe('FREE');
         expect(c.messages.join(' ')).toMatch(/unverified/);
         mockQueue = [];
+    });
+});
+
+describe('function-group locks (live shape, ZBASIS 2026-10-27)', () => {
+    const pad = (g: string) => g.padEnd(26);
+    const locks = [
+        { TRKORR: 'S4DK925117', LOKEY: `${pad('ZBASIS')}FUNCZBP_JOB_VALIDATE` },
+        { TRKORR: 'S4DK925117', LOKEY: `${pad('ZBASIS')}FUNCZBP_JOB_CREATE` },
+        { TRKORR: 'S4DK999999', LOKEY: `${pad('ZBASIS02')}FUNCZ_OTHER` },
+    ];
+    const reqRows = [
+        { TRKORR: 'S4DK925117', STRKORR: 'S4DK925116', AS4USER: 'SSCR', TRSTATUS: 'D', TARSYSTEM: '', AS4TEXT: 'task' },
+        { TRKORR: 'S4DK925116', STRKORR: '', AS4USER: 'SSCR', TRSTATUS: 'D', TARSYSTEM: '/ZS4Q/', AS4TEXT: 'work CR' },
+    ];
+    test('only the rows of that group count (ZBASIS is not ZBASIS02)', () => {
+        expect(groupLockRows('ZBASIS', locks)).toHaveLength(2);
+        expect(groupLockRows('ZBASIS02', locks)).toHaveLength(1);
+    });
+    test('all FMs of the group in one request give one holder with its task', () => {
+        const h = locksToHolders(groupLockRows('ZBASIS', locks), reqRows);
+        expect(h).toHaveLength(1);
+        expect(h[0].request.number).toBe('S4DK925116');
+        expect(h[0].tasks.map(t => t.number)).toEqual(['S4DK925117']);
     });
 });

@@ -73,6 +73,7 @@ describe('Transport lifecycle', () => {
         const text = ok(await handleManageTransport({
             action: 'create',
             description: 'Complex test transport — auto-created',
+            force_new: true,
             object_url: objectUrl,
             dev_class: devClass,
         }), 'create transport');

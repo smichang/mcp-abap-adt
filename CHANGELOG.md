@@ -5,6 +5,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.12.0] - 2026-10-27
+
+### Added
+- **One change request per goal, decided by the tools** (`src/lib/resolveTransport.ts`). `WriteProgram` without `transport_number` now reuses your open CR (a description match with `transport_description` wins, else the newest), keeps the CR an object is already in, or — when the object, or for a function module its function group, is held in a colleague's CR — joins that CR with a task of your own (`add_task`) instead of opening a parallel one. It refuses before locking when the goal spans several CRs (two colleagues, a colleague and your own, two own CRs) and never falls back to a new CR when the join is refused. `transport_description` only creates a CR when none can be reused. Every write reports a `CR choice — rule N` line. Live-verified on S4D (`ZBASIS`): rule 1 reuse across new and existing objects, an own task in another user's CR, detection of a real foreign holder. Tests: `resolveTransport.test.ts` (offline), `crpolicy.test.ts` (live; write part opt-in via `MCP_TEST_CR_WRITE=1`).
+
+### Changed
+- **`ManageTransport create` is refused while a CR could be reused** (the object is already in a CR, a colleague's CR holds it, or you have an open one): the answer names the CR to use and nothing is created. `force_new=true` opens a separate CR on purpose. Callers that always create must now pass it (the live suites do).
+
+### Fixed
+- **A held object was read as `LOCAL`**: ADT `transportchecks` answers `RECORDING` empty for an object already registered in a request, while still listing its holder. `verdictOf` (so `GetMeta TRANSPORT object_name`) and the new resolver now count a holder as transportable.
+- **Function groups showed no holder.** `transportchecks` reports no lock for a function group; CTS treats it as held by every request carrying one of its modules and then refuses to delete a member from any other request. `fetchTransportCheck` now reads the group's holders from `TLOCK`, so a new function module resolves to the request that already holds its siblings.
+- **`GetMeta TRANSPORT` reported every function module as FREE, even when held in a colleague's open request.** ADT `transportchecks` returns no locks for `LIMU FUNC`; CTS keeps the lock in `TLOCK` under the function group's key. `fetchTransportCheck` now reads the holder from `TLOCK` + `E070`/`E07T` (read-only datapreview) when ADT reports none for a function module, so `GetMeta TRANSPORT` and the `WriteProgram`/`DeleteObject`/`ActivateObjects` guards see it. All 60 FM locks on S4D were affected. Offline tests in `transportCheck.test.ts`; live-verified.
+
 ## [3.11.0] - 2026-10-20
 
 ### Added
